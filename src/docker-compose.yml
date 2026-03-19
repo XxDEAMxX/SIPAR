@@ -1,0 +1,40 @@
+services:
+  backend:
+    build: ./nuvora-backend
+    container_name: smartpark-backend
+    environment:
+      TZ: America/Bogota
+      DATABASE_URL: "mysql+pymysql://app:app123@db:3306/test4"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: admin
+      SECRET_KEY: "your-super-secret-jwt-key-change-in-prod"
+      SERVICE_API_KEY: "nuvora-service-key-2024-change-in-prod"
+      ADMIN_BOOTSTRAP_ENABLED: ${ADMIN_BOOTSTRAP_ENABLED:-true}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_NOMBRE: ${ADMIN_NOMBRE:-Administrador}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: mysql:8
+    container_name: smartpark-db
+    environment:
+      TZ: America/Bogota
+      MYSQL_ROOT_PASSWORD: 0000
+      MYSQL_DATABASE: test4
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app123
+      MYSQL_ROOT_HOST: "%"
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "app", "-papp123"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
