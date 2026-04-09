@@ -282,27 +282,82 @@ function AdminDashboard({ session, onLogout }) {
     }
   };
 
+  const stats = useMemo(() => {
+    const total = events.length;
+    const manual = events.filter((evt) => evt.source === "manual").length;
+    const auto = events.filter((evt) => evt.source === "auto-camera").length;
+    const forwarded = events.filter((evt) => evt.forwarded).length;
+    const duplicates = events.filter((evt) => evt.duplicate).length;
+    const successRate = total > 0 ? Math.round((forwarded / total) * 100) : 0;
+    return { total, manual, auto, forwarded, duplicates, successRate };
+  }, [events]);
+
+  const latestEvent = events[0] || null;
+  const serviceHealthy = serviceStatus.toLowerCase().startsWith("activo");
+
   return (
     <main className="admin-page">
       <header className="admin-header">
-        <div>
+        <div className="admin-title-block">
           <h1>Dashboard Administrador</h1>
           <p>
             Bienvenido, {session.user.nombre}. Supervisa camara y eventos de salida
             en tiempo real.
           </p>
         </div>
-        <button className="primary" onClick={onLogout} type="button">
-          Cerrar sesion
-        </button>
+        <div className="header-actions">
+          <span className={`status-pill ${serviceHealthy ? "ok" : "warn"}`}>
+            {serviceHealthy ? "Servicio operativo" : "Servicio con incidente"}
+          </span>
+          <button className="primary" onClick={onLogout} type="button">
+            Cerrar sesion
+          </button>
+        </div>
       </header>
+
+      <section className="kpi-grid" aria-label="resumen operativo">
+        <article className="panel kpi-card">
+          <p>Eventos recientes</p>
+          <strong>{stats.total}</strong>
+          <span>Ultimas detecciones y registros</span>
+        </article>
+        <article className="panel kpi-card">
+          <p>Automaticos vs manuales</p>
+          <strong>
+            {stats.auto} / {stats.manual}
+          </strong>
+          <span>Camara vs registro del operador</span>
+        </article>
+        <article className="panel kpi-card">
+          <p>Tasa de envio</p>
+          <strong>{stats.successRate}%</strong>
+          <span>{stats.forwarded} eventos enviados al backend</span>
+        </article>
+        <article className="panel kpi-card">
+          <p>Duplicados filtrados</p>
+          <strong>{stats.duplicates}</strong>
+          <span>Controlados por ventana anti-repeticion</span>
+        </article>
+      </section>
 
       <section className="admin-grid">
         <article className="panel camera-panel">
           <h2>Camara en vivo</h2>
           <video ref={videoRef} className="camera-preview" autoPlay muted playsInline />
-          <p className="meta">Estado microservicio: {serviceStatus}</p>
-          <p className="meta">Deteccion: {detectStatus}</p>
+          <div className="camera-metrics">
+            <p className="meta">
+              <strong>Estado microservicio:</strong> {serviceStatus}
+            </p>
+            <p className="meta">
+              <strong>Deteccion:</strong> {detectStatus}
+            </p>
+            <p className="meta">
+              <strong>Ultimo evento:</strong>{" "}
+              {latestEvent
+                ? `${latestEvent.plate} · ${formatDateTime(latestEvent.exit_time)}`
+                : "Sin eventos"}
+            </p>
+          </div>
           <div className="camera-actions">
             <button
               className="ghost-action"
@@ -315,25 +370,48 @@ function AdminDashboard({ session, onLogout }) {
           {notification && <p className="ok">{notification}</p>}
         </article>
 
-        <article className="panel form-panel">
-          <h2>Registrar salida manual</h2>
-          <form onSubmit={onSubmitManualExit} className="form">
-            <label htmlFor="manualPlate">Placa</label>
-            <input
-              id="manualPlate"
-              type="text"
-              value={plateInput}
-              onChange={(e) => setPlateInput(e.target.value.toUpperCase())}
-              placeholder="Ejemplo: ABC123"
-              required
-            />
-            <button className="primary" disabled={manualLoading} type="submit">
-              {manualLoading ? "Registrando..." : "Registrar salida"}
-            </button>
-          </form>
-          {manualMessage && <p className="meta">{manualMessage}</p>}
-          <p className="meta">Fuente: servicio {EXIT_API_BASE}/api/v1/vehicle-exits</p>
-        </article>
+        <div className="side-stack">
+          <article className="panel form-panel">
+            <h2>Registrar salida manual</h2>
+            <form onSubmit={onSubmitManualExit} className="form">
+              <label htmlFor="manualPlate">Placa</label>
+              <input
+                id="manualPlate"
+                type="text"
+                value={plateInput}
+                onChange={(e) => setPlateInput(e.target.value.toUpperCase())}
+                placeholder="Ejemplo: ABC123"
+                required
+              />
+              <button className="primary" disabled={manualLoading} type="submit">
+                {manualLoading ? "Registrando..." : "Registrar salida"}
+              </button>
+            </form>
+            {manualMessage && <p className="meta">{manualMessage}</p>}
+          </article>
+
+          <article className="panel service-panel">
+            <h2>Estado operativo</h2>
+            <ul className="service-list">
+              <li>
+                <span>Auto deteccion</span>
+                <strong>{autoDetectEnabled ? "Activa" : "Pausada"}</strong>
+              </li>
+              <li>
+                <span>Canal backend</span>
+                <strong>{serviceHealthy ? "Conectado" : "Error"}</strong>
+              </li>
+              <li>
+                <span>Origen de eventos</span>
+                <strong>{EXIT_API_BASE}</strong>
+              </li>
+              <li>
+                <span>Sesion</span>
+                <strong>{session.user.usuario}</strong>
+              </li>
+            </ul>
+          </article>
+        </div>
 
         <article className="panel events-panel">
           <h2>Vehiculos registrados</h2>
@@ -341,8 +419,8 @@ function AdminDashboard({ session, onLogout }) {
             <p className="meta">Sin eventos aun.</p>
           ) : (
             <ul className="event-list">
-              {events.map((evt) => (
-                <li key={`${evt.exit_time}-${evt.plate}`}>
+              {events.map((evt, idx) => (
+                <li key={`${evt.exit_time}-${evt.plate}-${idx}`}>
                   <div>
                     <strong>{evt.plate}</strong>
                     <span>{formatDateTime(evt.exit_time)}</span>
@@ -350,6 +428,9 @@ function AdminDashboard({ session, onLogout }) {
                   <div className="event-tags">
                     <span>{evt.source}</span>
                     <span>{evt.forwarded ? "enviado" : "pendiente"}</span>
+                    {evt.confidence !== null && evt.confidence !== undefined && (
+                      <span>conf {Math.round(evt.confidence * 100)}%</span>
+                    )}
                   </div>
                 </li>
               ))}
@@ -420,23 +501,9 @@ export default function App() {
       <section className="shell">
         <aside className="hero">
           <div className="hero-top">
-            <span className="hero-badge">SIPAR · Sprint 1</span>
-            <h1>Control de acceso vehicular</h1>
-            <p>
-              Plataforma de parqueadero inteligente para administrar ingresos,
-              turnos y operacion diaria.
-            </p>
-          </div>
-
-          <div className="hero-metrics" aria-label="roles soportados">
-            <article>
-              <strong>Rol admin</strong>
-              <span>Gestion y monitoreo</span>
-            </article>
-            <article>
-              <strong>Rol operador</strong>
-              <span>Operacion en campo</span>
-            </article>
+            <span className="hero-badge">SIPAR</span>
+            <h1>SIPAR</h1>
+            <p>Tu seguridad es nuestra prioridad.</p>
           </div>
         </aside>
 

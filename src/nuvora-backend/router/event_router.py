@@ -30,6 +30,22 @@ class VehicleExitEventRequest(BaseModel):
         return normalized
 
 
+class VehicleEntryEventRequest(BaseModel):
+    placa: str = Field(..., min_length=5, max_length=10)
+    hora_entrada: datetime
+    fuente: str | None = Field(default="auto-camera", max_length=32)
+    confianza: float | None = Field(default=None, ge=0.0, le=1.0)
+    camera_id: str | None = Field(default=None, max_length=64)
+
+    @field_validator("placa")
+    @classmethod
+    def normalize_plate(cls, value: str) -> str:
+        normalized = value.replace("-", "").replace(" ", "").upper()
+        if not normalized.isalnum():
+            raise ValueError("La placa solo puede contener letras y numeros")
+        return normalized
+
+
 @event_router.post("/vehicle-exit")
 def receive_vehicle_exit_event(
     payload: VehicleExitEventRequest,
@@ -53,4 +69,29 @@ def receive_vehicle_exit_event(
         "message": "Evento de salida recibido en backend principal",
         "placa": payload.placa,
         "hora_salida": payload.hora_salida,
+    }
+
+
+@event_router.post("/vehicle-entry")
+def receive_vehicle_entry_event(
+    payload: VehicleEntryEventRequest,
+    _: bool = Depends(verify_service_api_key),
+):
+    """
+    Recibe eventos de entrada desde microservicios (camara, edge, etc.).
+    """
+    logger.info(
+        "Evento entrada recibido | placa=%s hora=%s fuente=%s confianza=%s camera=%s",
+        payload.placa,
+        payload.hora_entrada.isoformat(),
+        payload.fuente,
+        payload.confianza,
+        payload.camera_id,
+    )
+
+    return {
+        "accepted": True,
+        "message": "Evento de entrada recibido en backend principal",
+        "placa": payload.placa,
+        "hora_entrada": payload.hora_entrada,
     }

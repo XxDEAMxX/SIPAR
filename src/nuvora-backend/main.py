@@ -8,7 +8,7 @@ from router.event_router import event_router
 from router.user_router import user
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from config.db import Base, SessionLocal, engine
 import model.users
@@ -19,45 +19,87 @@ from model.users import User
 logger = logging.getLogger(__name__)
 
 
-def bootstrap_admin_user() -> None:
-    """Create an initial admin user once when env vars are provided."""
-    admin_enabled = os.getenv("ADMIN_BOOTSTRAP_ENABLED", "true").lower() in {"1", "true", "yes"}
-    if not admin_enabled:
-        logger.info("Admin bootstrap disabled by ADMIN_BOOTSTRAP_ENABLED")
+def _upsert_default_user(
+    db,
+    username: str,
+    password: str,
+    nombre: str,
+    rol: str,
+    force_password_reset: bool,
+) -> None:
+    existing = db.query(User).filter(User.usuario == username).first()
+    password_hash = generate_password_hash(password, method="pbkdf2:sha256", salt_length=30)
+
+    if existing:
+        changed = False
+        if existing.rol != rol:
+            existing.rol = rol
+            changed = True
+        if existing.activo is False:
+            existing.activo = True
+            changed = True
+        if force_password_reset and not check_password_hash(existing.password_hash, password):
+            existing.password_hash = password_hash
+            changed = True
+
+        if changed:
+            db.commit()
+            logger.info("Default user '%s' updated successfully.", username)
+        else:
+            logger.info("Default user '%s' already configured.", username)
         return
+
+    user = User(
+        nombre=nombre,
+        rol=rol,
+        usuario=username,
+        password_hash=password_hash,
+        activo=True,
+    )
+    db.add(user)
+    db.commit()
+    logger.info("Default user '%s' created successfully.", username)
+
+
+def bootstrap_default_users() -> None:
+    """Create or reconcile default users for local/dev startup."""
+    users_enabled = os.getenv("DEFAULT_USERS_BOOTSTRAP_ENABLED", "true").lower() in {"1", "true", "yes"}
+    if not users_enabled:
+        logger.info("Default users bootstrap disabled by DEFAULT_USERS_BOOTSTRAP_ENABLED")
+        return
+
+    force_password_reset = os.getenv("DEFAULT_USERS_FORCE_PASSWORD_RESET", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
     admin_username = os.getenv("ADMIN_USERNAME", "admin")
-    admin_password = os.getenv("ADMIN_PASSWORD")
+    admin_password = os.getenv("ADMIN_PASSWORD", "Admin1234")
     admin_nombre = os.getenv("ADMIN_NOMBRE", "Administrador")
 
-    if not admin_password:
-        logger.warning("ADMIN_PASSWORD is not set. Skipping admin bootstrap.")
-        return
+    operator_username = os.getenv("OPERATOR_USERNAME", "operador")
+    operator_password = os.getenv("OPERATOR_PASSWORD", "Operador1234")
+    operator_nombre = os.getenv("OPERATOR_NOMBRE", "Operador")
 
     db = SessionLocal()
     try:
-        existing = db.query(User).filter(User.usuario == admin_username).first()
-        if existing:
-            if existing.rol != "admin" or existing.activo is False:
-                existing.rol = "admin"
-                existing.activo = True
-                db.commit()
-                logger.info("Existing user '%s' promoted/activated as admin.", admin_username)
-            else:
-                logger.info("Admin user '%s' already exists.", admin_username)
-            return
-
-        password_hash = generate_password_hash(admin_password, method="pbkdf2:sha256", salt_length=30)
-        admin_user = User(
+        _upsert_default_user(
+            db=db,
+            username=admin_username,
+            password=admin_password,
             nombre=admin_nombre,
             rol="admin",
-            usuario=admin_username,
-            password_hash=password_hash,
-            activo=True,
+            force_password_reset=force_password_reset,
         )
-        db.add(admin_user)
-        db.commit()
-        logger.info("Admin user '%s' created successfully.", admin_username)
+        _upsert_default_user(
+            db=db,
+            username=operator_username,
+            password=operator_password,
+            nombre=operator_nombre,
+            rol="vigilante",
+            force_password_reset=force_password_reset,
+        )
     finally:
         db.close()
 
@@ -95,7 +137,7 @@ app.add_middleware(
 # Crear las tablas en la base de datos
 wait_for_database()
 Base.metadata.create_all(bind=engine)
-bootstrap_admin_user()
+bootstrap_default_users()
 
 # Incluir el enrutador de usuarios
 app.include_router(user, prefix="/api")

@@ -11,10 +11,14 @@ services:
       RABBITMQ_PASS: admin
       SECRET_KEY: "your-super-secret-jwt-key-change-in-prod"
       SERVICE_API_KEY: "nuvora-service-key-2024-change-in-prod"
-      ADMIN_BOOTSTRAP_ENABLED: ${ADMIN_BOOTSTRAP_ENABLED:-true}
+      DEFAULT_USERS_BOOTSTRAP_ENABLED: ${DEFAULT_USERS_BOOTSTRAP_ENABLED:-true}
+      DEFAULT_USERS_FORCE_PASSWORD_RESET: ${DEFAULT_USERS_FORCE_PASSWORD_RESET:-true}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_NOMBRE: ${ADMIN_NOMBRE:-Administrador}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin1234}
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:-operador}
+      OPERATOR_NOMBRE: ${OPERATOR_NOMBRE:-Operador}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-Operador1234}
     ports:
       - "8000:8000"
     depends_on:
@@ -38,6 +42,24 @@ services:
       - "8010:8010"
     depends_on:
       - backend
+  vehicle-entry-service:
+    build: ./vehicle-entry-service
+    container_name: smartpark-vehicle-entry-service
+    environment:
+      TZ: America/Bogota
+      SERVICE_NAME: vehicle-entry-service
+      BACKEND_ENTRY_URL: "http://backend:8000/api/events/vehicle-entry"
+      SERVICE_API_KEY: "nuvora-service-key-2024-change-in-prod"
+      AUTO_DETECTION_ENABLED: ${ENTRY_AUTO_DETECTION_ENABLED:-false}
+      DETECTOR_PROVIDER: ${ENTRY_DETECTOR_PROVIDER:-fast-alpr}
+      CAMERA_INDEX: ${ENTRY_CAMERA_INDEX:-0}
+      CAMERA_POLL_INTERVAL_SECONDS: ${ENTRY_CAMERA_POLL_INTERVAL_SECONDS:-0.7}
+      CAMERA_MIN_CONFIDENCE: ${ENTRY_CAMERA_MIN_CONFIDENCE:-0.85}
+      CAMERA_ID: ${ENTRY_CAMERA_ID:-cam-entrada-1}
+    ports:
+      - "8011:8010"
+    depends_on:
+      - backend
   frontend:
     build: ./nuvora-frontend
     container_name: smartpark-frontend
@@ -46,6 +68,7 @@ services:
     depends_on:
       - backend
       - vehicle-exit-service
+      - vehicle-entry-service
   db:
     image: mysql:8
     container_name: smartpark-db
