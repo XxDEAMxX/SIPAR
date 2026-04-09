@@ -5,6 +5,7 @@ import time
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from router.user_router import user
+from router.plate_detection_router import plate_detection_router
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from werkzeug.security import generate_password_hash
@@ -12,6 +13,7 @@ from werkzeug.security import generate_password_hash
 from config.db import Base, SessionLocal, engine
 import model.users
 import model.turnos
+import model.plate_detections
 from model.users import User
 
 
@@ -98,3 +100,4 @@ bootstrap_admin_user()
 
 # Incluir el enrutador de usuarios
 app.include_router(user, prefix="/api")
+app.include_router(plate_detection_router, prefix="/api")
