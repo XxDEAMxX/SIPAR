@@ -1,0 +1,4 @@
+[
+  {"plate": "ABC123", "confidence": 0.99},
+  {"plate": "XYZ987", "confidence": 0.96}
+]
