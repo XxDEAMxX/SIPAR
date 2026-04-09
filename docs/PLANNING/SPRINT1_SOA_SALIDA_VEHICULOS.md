@@ -78,3 +78,33 @@ docker compose up --build
 ## Nota de integracion
 Este microservicio envia eventos al endpoint configurado en `BACKEND_EXIT_URL`.
 El backend principal debe exponer esa ruta para persistir la salida en tickets/vehiculos.
+
+## Integracion automatica con camara (misma logica de x.py)
+El detector `fast-alpr` del servicio ahora usa la misma estrategia de `src/test-deteccion/x.py`:
+
+- Detecta providers ONNX disponibles.
+- Si hay CUDA usa `CUDAExecutionProvider` + `CPUExecutionProvider`.
+- Si no hay CUDA usa solo `CPUExecutionProvider`.
+
+### Variables necesarias
+- `AUTO_DETECTION_ENABLED=true`
+- `DETECTOR_PROVIDER=fast-alpr`
+- `CAMERA_INDEX=0`
+- `CAMERA_MIN_CONFIDENCE=0.85`
+
+### Ejecucion recomendada para usar camara local en Windows
+En Windows, Docker normalmente no expone la webcam del host al contenedor.
+Por eso se recomienda correr el `vehicle-exit-service` localmente y backend en Docker:
+
+```bash
+cd src/vehicle-exit-service
+pip install -r requirements.txt
+set AUTO_DETECTION_ENABLED=true
+set DETECTOR_PROVIDER=fast-alpr
+set CAMERA_INDEX=0
+set BACKEND_EXIT_URL=http://localhost:8000/api/events/vehicle-exit
+set SERVICE_API_KEY=nuvora-service-key-2024-change-in-prod
+uvicorn main:app --host 0.0.0.0 --port 8010
+```
+
+Con eso, cada placa detectada por la camara se envia automaticamente al backend principal.

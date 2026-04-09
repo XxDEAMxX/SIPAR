@@ -49,10 +49,21 @@ class MockDetector(BaseDetector):
 class FastAlprDetector(BaseDetector):
     def __init__(self) -> None:
         from fast_alpr import ALPR
+        import onnxruntime as ort
+
+        providers_disponibles = ort.get_available_providers()
+        if "CUDAExecutionProvider" in providers_disponibles:
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            logger.info("FastALPR inicializado con GPU (CUDA)")
+        else:
+            providers = ["CPUExecutionProvider"]
+            logger.info("FastALPR inicializado con CPU")
 
         self._alpr = ALPR(
             detector_model="yolo-v9-t-384-license-plate-end2end",
             ocr_model="cct-xs-v1-global-model",
+            detector_providers=providers,
+            ocr_providers=providers,
         )
 
     def detect(self, frame: Any) -> list[Detection]:

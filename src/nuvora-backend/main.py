@@ -4,6 +4,7 @@ import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from router.event_router import event_router
 from router.user_router import user
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -98,3 +99,4 @@ bootstrap_admin_user()
 
 # Incluir el enrutador de usuarios
 app.include_router(user, prefix="/api")
+app.include_router(event_router, prefix="/api")
