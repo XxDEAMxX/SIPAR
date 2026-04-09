@@ -29,7 +29,7 @@ services:
       BACKEND_EXIT_URL: "http://backend:8000/api/events/vehicle-exit"
       SERVICE_API_KEY: "nuvora-service-key-2024-change-in-prod"
       AUTO_DETECTION_ENABLED: ${AUTO_DETECTION_ENABLED:-false}
-      DETECTOR_PROVIDER: ${DETECTOR_PROVIDER:-mock}
+      DETECTOR_PROVIDER: ${DETECTOR_PROVIDER:-fast-alpr}
       CAMERA_INDEX: ${CAMERA_INDEX:-0}
       CAMERA_POLL_INTERVAL_SECONDS: ${CAMERA_POLL_INTERVAL_SECONDS:-0.7}
       CAMERA_MIN_CONFIDENCE: ${CAMERA_MIN_CONFIDENCE:-0.85}
@@ -45,6 +45,7 @@ services:
       - "5173:80"
     depends_on:
       - backend
+      - vehicle-exit-service
   db:
     image: mysql:8
     container_name: smartpark-db

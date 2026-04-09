@@ -54,7 +54,7 @@ class ServiceSettings:
             request_timeout_seconds=_to_float(os.getenv("REQUEST_TIMEOUT_SECONDS"), 5.0),
             duplicate_window_seconds=_to_int(os.getenv("DUPLICATE_WINDOW_SECONDS"), 20),
             auto_detection_enabled=_to_bool(os.getenv("AUTO_DETECTION_ENABLED"), False),
-            detector_provider=os.getenv("DETECTOR_PROVIDER", "mock").strip().lower(),
+            detector_provider=os.getenv("DETECTOR_PROVIDER", "fast-alpr").strip().lower(),
             camera_index=_to_int(os.getenv("CAMERA_INDEX"), 0),
             camera_poll_interval_seconds=_to_float(os.getenv("CAMERA_POLL_INTERVAL_SECONDS"), 0.7),
             camera_min_confidence=_to_float(os.getenv("CAMERA_MIN_CONFIDENCE"), 0.85),

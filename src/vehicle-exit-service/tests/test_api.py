@@ -1,7 +1,11 @@
+import base64
 from datetime import datetime, timezone
 
+import cv2
+import numpy as np
 from fastapi.testclient import TestClient
 
+from detector import Detection
 from main import create_app
 from schemas import ExitEventResponse
 from settings import ServiceSettings
@@ -15,6 +19,11 @@ class FakeDispatcher:
     def process_event(self, event, strict_forwarding: bool = True):
         self.calls += 1
         return self.result
+
+
+class FakeFrameDetector:
+    def detect(self, frame):
+        return [Detection(plate="ABC123", confidence=0.95)]
 
 
 def _settings() -> ServiceSettings:
@@ -96,3 +105,36 @@ def test_register_vehicle_exit_backend_error() -> None:
 
     assert response.status_code == 502
     assert response.json()["detail"] == "backend error"
+
+
+def test_detect_frame_endpoint_registers_event() -> None:
+    app = create_app(_settings())
+    app.state.dispatcher = FakeDispatcher(
+        ExitEventResponse(
+            accepted=True,
+            duplicate=False,
+            forwarded=True,
+            message="ok",
+            plate="ABC123",
+            exit_time=datetime(2026, 4, 8, 18, 0, tzinfo=timezone.utc),
+        )
+    )
+    app.state.frame_detector = FakeFrameDetector()
+    client = TestClient(app)
+
+    image = np.zeros((64, 128, 3), dtype=np.uint8)
+    ok, encoded = cv2.imencode(".jpg", image)
+    assert ok is True
+    image_b64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+
+    response = client.post(
+        "/api/v1/vehicle-exits/detect-frame",
+        json={
+            "image_base64": image_b64,
+            "camera_id": "cam-test",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["processed"] == 1
+    assert app.state.dispatcher.calls == 1

@@ -249,6 +249,139 @@ input:focus {
   box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.22);
 }
 
+.meta {
+  margin: 0;
+  color: #4f6475;
+  font-size: 0.86rem;
+}
+
+.admin-page {
+  min-height: 100vh;
+  padding: 26px;
+}
+
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.admin-header h1 {
+  margin: 0;
+  font-size: 1.7rem;
+}
+
+.admin-header p {
+  margin-top: 8px;
+  margin-bottom: 0;
+  color: #486172;
+}
+
+.admin-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1.2fr 0.9fr;
+  grid-template-areas:
+    "camera form"
+    "events events";
+}
+
+.panel {
+  border-radius: 16px;
+  border: 1px solid #d4e3e7;
+  background: #fff;
+  padding: 16px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.panel h2 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 1.15rem;
+}
+
+.camera-panel {
+  grid-area: camera;
+}
+
+.form-panel {
+  grid-area: form;
+}
+
+.events-panel {
+  grid-area: events;
+}
+
+.camera-preview {
+  width: 100%;
+  max-height: 380px;
+  object-fit: cover;
+  border-radius: 12px;
+  background: #0f172a;
+  border: 1px solid #c5d6dc;
+}
+
+.event-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.event-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f5faf9;
+  border: 1px solid #d8e9e4;
+}
+
+.event-list strong {
+  display: block;
+  font-size: 0.97rem;
+}
+
+.event-list span {
+  font-size: 0.8rem;
+  color: #4e6978;
+}
+
+.event-tags {
+  display: flex;
+  gap: 8px;
+}
+
+.event-tags span {
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #def7ef;
+  color: #11674f;
+  border: 1px solid #b8e5d6;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.camera-actions {
+  margin-top: 10px;
+}
+
+.ghost-action {
+  border: 1px solid #b6d1d9;
+  background: #edf7fa;
+  color: #0f5f5c;
+  font-weight: 700;
+  border-radius: 10px;
+  height: 38px;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: 1fr;
@@ -261,6 +394,14 @@ input:focus {
 
   .hero p {
     max-width: 60ch;
+  }
+
+  .admin-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "camera"
+      "form"
+      "events";
   }
 }
 
@@ -275,5 +416,14 @@ input:focus {
 
   .card {
     padding: 24px 18px 16px;
+  }
+
+  .admin-page {
+    padding: 14px;
+  }
+
+  .admin-header {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

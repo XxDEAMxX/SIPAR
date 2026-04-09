@@ -36,6 +36,41 @@ class ExitEventResponse(BaseModel):
     exit_time: datetime
 
 
+class ExitEventItem(BaseModel):
+    plate: str
+    exit_time: datetime
+    source: str
+    confidence: float | None = None
+    forwarded: bool
+    duplicate: bool
+    message: str
+
+
+class RecentExitEventsResponse(BaseModel):
+    total: int
+    items: list[ExitEventItem]
+
+
+class FrameDetectionRequest(BaseModel):
+    image_base64: str = Field(..., min_length=20)
+    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    camera_id: str | None = Field(default=None, max_length=64)
+
+
+class FrameDetectionItem(BaseModel):
+    plate: str
+    confidence: float
+    forwarded: bool
+    duplicate: bool
+    message: str
+
+
+class FrameDetectionResponse(BaseModel):
+    processed: int
+    items: list[FrameDetectionItem]
+    message: str
+
+
 class HealthResponse(BaseModel):
     status: str
     service: str

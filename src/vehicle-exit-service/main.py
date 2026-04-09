@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import threading
@@ -12,8 +13,16 @@ from fastapi.responses import JSONResponse
 
 from backend_client import MainBackendClient
 from detector import build_detector
-from schemas import ExitEventRequest, ExitEventResponse, HealthResponse
-from service import DuplicateEventGuard, ExitEventDispatcher
+from schemas import (
+    ExitEventRequest,
+    ExitEventResponse,
+    FrameDetectionItem,
+    FrameDetectionRequest,
+    FrameDetectionResponse,
+    HealthResponse,
+    RecentExitEventsResponse,
+)
+from service import DuplicateEventGuard, ExitEventDispatcher, ExitEventRecorder
 from settings import ServiceSettings
 
 
@@ -88,6 +97,7 @@ class CameraWorker:
 
 def create_app(settings: ServiceSettings | None = None) -> FastAPI:
     service_settings = settings or ServiceSettings.from_env()
+    event_recorder = ExitEventRecorder(max_items=200)
     backend_client = MainBackendClient(
         base_url=service_settings.backend_exit_url,
         api_key=service_settings.backend_api_key,
@@ -96,6 +106,7 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
     dispatcher = ExitEventDispatcher(
         backend_client=backend_client,
         duplicate_guard=DuplicateEventGuard(service_settings.duplicate_window_seconds),
+        event_recorder=event_recorder,
     )
 
     @asynccontextmanager
@@ -120,6 +131,11 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
     app.state.settings = service_settings
     app.state.dispatcher = dispatcher
     app.state.camera_worker = CameraWorker(service_settings, dispatcher)
+    app.state.event_recorder = event_recorder
+    app.state.frame_detector = build_detector(
+        provider=service_settings.detector_provider,
+        mock_file=os.getenv("MOCK_DETECTIONS_FILE"),
+    )
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -131,6 +147,70 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
         if not result.accepted:
             raise RuntimeError(result.message)
         return result
+
+    @app.get("/api/v1/vehicle-exits/recent", response_model=RecentExitEventsResponse)
+    def get_recent_vehicle_exits(request: Request, limit: int = 20) -> RecentExitEventsResponse:
+        safe_limit = max(1, min(limit, 100))
+        items = request.app.state.event_recorder.list_recent(limit=safe_limit)
+        return RecentExitEventsResponse(total=len(items), items=items)
+
+    @app.post("/api/v1/vehicle-exits/detect-frame", response_model=FrameDetectionResponse)
+    def detect_vehicle_exit_from_frame(
+        payload: FrameDetectionRequest,
+        request: Request,
+    ) -> FrameDetectionResponse:
+        import cv2
+        import numpy as np
+
+        encoded = payload.image_base64
+        if "," in encoded:
+            encoded = encoded.split(",", 1)[1]
+
+        try:
+            image_bytes = base64.b64decode(encoded)
+        except Exception as exc:
+            raise RuntimeError(f"Frame base64 invalido: {exc}")
+
+        np_arr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise RuntimeError("No fue posible decodificar el frame")
+
+        min_conf = payload.min_confidence
+        if min_conf is None:
+            min_conf = request.app.state.settings.camera_min_confidence
+
+        detections = request.app.state.frame_detector.detect(frame)
+        items: list[FrameDetectionItem] = []
+
+        for detection in detections:
+            if detection.confidence < min_conf:
+                continue
+
+            event = ExitEventRequest(
+                plate=detection.plate,
+                exit_time=datetime.now(timezone.utc),
+                source="auto-camera",
+                confidence=float(detection.confidence),
+                camera_id=payload.camera_id or request.app.state.settings.camera_id,
+            )
+
+            result = request.app.state.dispatcher.process_event(event, strict_forwarding=False)
+            items.append(
+                FrameDetectionItem(
+                    plate=result.plate,
+                    confidence=float(detection.confidence),
+                    forwarded=result.forwarded,
+                    duplicate=result.duplicate,
+                    message=result.message,
+                )
+            )
+
+        return FrameDetectionResponse(
+            processed=len(items),
+            items=items,
+            message="Frame procesado correctamente",
+        )
 
     @app.exception_handler(RuntimeError)
     async def runtime_error_handler(request: Request, exc: RuntimeError) -> JSONResponse:

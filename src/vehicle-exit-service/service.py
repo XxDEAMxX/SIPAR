@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime, timedelta
 from threading import Lock
 
 from backend_client import MainBackendClient
-from schemas import ExitEventRequest, ExitEventResponse
+from schemas import ExitEventItem, ExitEventRequest, ExitEventResponse
 
 
 class DuplicateEventGuard:
@@ -35,14 +36,49 @@ class DuplicateEventGuard:
             del self._plates_seen[plate]
 
 
+class ExitEventRecorder:
+    def __init__(self, max_items: int = 100) -> None:
+        self._events: deque[ExitEventItem] = deque(maxlen=max_items)
+        self._lock = Lock()
+
+    def push(self, item: ExitEventItem) -> None:
+        with self._lock:
+            self._events.appendleft(item)
+
+    def list_recent(self, limit: int = 30) -> list[ExitEventItem]:
+        with self._lock:
+            return list(self._events)[:limit]
+
+
 class ExitEventDispatcher:
-    def __init__(self, backend_client: MainBackendClient, duplicate_guard: DuplicateEventGuard) -> None:
+    def __init__(
+        self,
+        backend_client: MainBackendClient,
+        duplicate_guard: DuplicateEventGuard,
+        event_recorder: ExitEventRecorder | None = None,
+    ) -> None:
         self.backend_client = backend_client
         self.duplicate_guard = duplicate_guard
+        self.event_recorder = event_recorder
+
+    def _record(self, event: ExitEventRequest, result: ExitEventResponse) -> None:
+        if not self.event_recorder:
+            return
+        self.event_recorder.push(
+            ExitEventItem(
+                plate=result.plate,
+                exit_time=result.exit_time,
+                source=event.source,
+                confidence=event.confidence,
+                forwarded=result.forwarded,
+                duplicate=result.duplicate,
+                message=result.message,
+            )
+        )
 
     def process_event(self, event: ExitEventRequest, strict_forwarding: bool = True) -> ExitEventResponse:
         if self.duplicate_guard.seen_recently(event.plate, event.exit_time):
-            return ExitEventResponse(
+            response = ExitEventResponse(
                 accepted=True,
                 duplicate=True,
                 forwarded=False,
@@ -50,6 +86,8 @@ class ExitEventDispatcher:
                 plate=event.plate,
                 exit_time=event.exit_time,
             )
+            self._record(event, response)
+            return response
 
         payload = {
             "placa": event.plate,
@@ -61,7 +99,7 @@ class ExitEventDispatcher:
 
         backend_result = self.backend_client.send_exit_event(payload)
         if backend_result.ok:
-            return ExitEventResponse(
+            response = ExitEventResponse(
                 accepted=True,
                 duplicate=False,
                 forwarded=True,
@@ -69,13 +107,15 @@ class ExitEventDispatcher:
                 plate=event.plate,
                 exit_time=event.exit_time,
             )
+            self._record(event, response)
+            return response
 
         message = (
             f"No fue posible enviar el evento al backend principal: "
             f"{backend_result.status_code} {backend_result.detail}"
         )
         if strict_forwarding:
-            return ExitEventResponse(
+            response = ExitEventResponse(
                 accepted=False,
                 duplicate=False,
                 forwarded=False,
@@ -83,8 +123,10 @@ class ExitEventDispatcher:
                 plate=event.plate,
                 exit_time=event.exit_time,
             )
+            self._record(event, response)
+            return response
 
-        return ExitEventResponse(
+        response = ExitEventResponse(
             accepted=True,
             duplicate=False,
             forwarded=False,
@@ -92,3 +134,5 @@ class ExitEventDispatcher:
             plate=event.plate,
             exit_time=event.exit_time,
         )
+        self._record(event, response)
+        return response
