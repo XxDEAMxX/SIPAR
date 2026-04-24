@@ -22,7 +22,7 @@ _load_env_file(_SERVICE_DIR / ".env")
 
 @dataclass(frozen=True)
 class Settings:
-    camera_index: int
+    camera_source: int | str
     camera_id: str
     backend_endpoint: str
     backend_timeout_seconds: float
@@ -46,10 +46,11 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    camera_index = int(os.getenv("CAMERA_INDEX", "3"))
+    raw_camera_source = os.getenv("CAMERA_SOURCE", "http://127.0.0.1:8010/cameras/salida/stream").strip()
+    camera_source: int | str = int(raw_camera_source) if raw_camera_source.isdigit() else raw_camera_source
     return Settings(
-        camera_index=camera_index,
-        camera_id=os.getenv("CAMERA_ID", f"cam-{camera_index}"),
+        camera_source=camera_source,
+        camera_id=os.getenv("CAMERA_ID", "salida"),
         backend_endpoint=os.getenv(
             "BACKEND_ENDPOINT", "http://127.0.0.1:8000/api/parking/detections"
         ).strip(),

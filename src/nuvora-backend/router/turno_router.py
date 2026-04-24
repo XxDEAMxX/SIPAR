@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -10,6 +8,7 @@ from model.tickets import Ticket
 from model.turnos import TURN_STATE, Turno
 from model.users import User
 from schema.turno_schema import TurnoCloseRequest, TurnoOpenRequest, TurnoResponse, TurnoTokenResponse
+from services.time_service import business_now
 
 
 turno_router = APIRouter(prefix="/turnos", tags=["Turnos"])
@@ -81,7 +80,7 @@ def iniciar_turno(
 
     nuevo_turno = Turno(
         usuario_id=current_user.id,
-        fecha_inicio=datetime.now(),
+        fecha_inicio=business_now(),
         monto_inicial=data.monto_inicial,
         observaciones=data.observaciones,
         estado="abierto",
@@ -105,7 +104,7 @@ def cerrar_mi_turno(
         raise HTTPException(status_code=404, detail="No tienes un turno abierto para cerrar")
 
     total_recaudado, total_vehiculos = get_turno_totals(db, turno.id)
-    turno.fecha_fin = datetime.now()
+    turno.fecha_fin = business_now()
     turno.estado = "cerrado"
     turno.monto_total = total_recaudado
     turno.total_vehiculos = total_vehiculos

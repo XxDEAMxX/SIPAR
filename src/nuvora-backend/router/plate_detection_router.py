@@ -1,11 +1,10 @@
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from config.db import SessionLocal
 from model.plate_detections import PlateDetection
 from schema.plate_detection_schema import PlateDetectionCreate, PlateDetectionResponse, BoundingBox
+from services.time_service import normalize_business_datetime
 
 
 plate_detection_router = APIRouter(prefix="/plates", tags=["Placas"])
@@ -35,7 +34,7 @@ def create_plate_detection(data: PlateDetectionCreate, db: Session = Depends(get
         bbox_y2=bbox.y2 if bbox else None,
         camera_id=data.camera_id,
         source=data.source,
-        detected_at=data.detected_at or datetime.utcnow(),
+        detected_at=normalize_business_datetime(data.detected_at),
     )
 
     db.add(new_detection)

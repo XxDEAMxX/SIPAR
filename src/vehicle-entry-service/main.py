@@ -48,7 +48,7 @@ def on_shutdown() -> None:
 def health() -> dict[str, Any]:
     return {
         "ok": True,
-        "camera_index": settings.camera_index,
+        "camera_source": settings.camera_source,
         "camera_id": settings.camera_id,
         "direction": settings.detection_direction,
         "consensus_window_seconds": settings.consensus_window_seconds,

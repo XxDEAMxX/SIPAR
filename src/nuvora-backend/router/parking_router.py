@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from queue import Empty, Full, Queue
 from threading import Lock
 
@@ -27,6 +27,7 @@ from schema.parking_schema import (
 )
 from services.plate_resolution import resolve_plate
 from services.tariff_service import calculate_tariff_charge
+from services.time_service import calculate_business_minutes, normalize_business_datetime
 
 
 parking_router = APIRouter(prefix="/parking", tags=["Parqueadero"])
@@ -75,20 +76,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-def normalize_detected_at(value: datetime | None) -> datetime:
-    if value is None:
-        return datetime.utcnow()
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def calculate_minutes(started_at: datetime, finished_at: datetime | None = None) -> int:
-    reference = finished_at or datetime.utcnow()
-    delta = reference - started_at
-    return max(0, int(delta.total_seconds() // 60))
 
 
 def get_open_ticket(db: Session, vehicle_id: int) -> Ticket | None:
@@ -268,7 +255,7 @@ def process_parking_operation(
         if ticket:
             status = "ignored"
             message = "La placa ya tiene una entrada activa."
-            parking_minutes = calculate_minutes(ticket.hora_entrada, detected_at)
+            parking_minutes = calculate_business_minutes(ticket.hora_entrada, detected_at)
         else:
             ticket = Ticket(
                 codigo_ticket=None,
@@ -311,7 +298,7 @@ def process_parking_operation(
             status = "ignored"
             message = "No existe una entrada activa para esta placa."
         else:
-            parking_minutes = calculate_minutes(ticket.hora_entrada, detected_at)
+            parking_minutes = calculate_business_minutes(ticket.hora_entrada, detected_at)
             tariff_calculation = calculate_tariff_charge(db, detected_at, parking_minutes)
             processed_event = ParkingEvent(
                 vehiculo_id=vehicle.id,
@@ -379,7 +366,7 @@ def process_parking_operation(
 
 @parking_router.post("/detections", response_model=ParkingDetectionResponse, dependencies=[Depends(verify_service_api_key)])
 def process_detection(data: ParkingDetectionCreate, db: Session = Depends(get_db)):
-    detected_at = normalize_detected_at(data.detected_at)
+    detected_at = normalize_business_datetime(data.detected_at)
     bbox = data.bounding_box
 
     detection = PlateDetection(
@@ -433,7 +420,7 @@ def register_manual_entry(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    detected_at = normalize_detected_at(data.detected_at)
+    detected_at = normalize_business_datetime(data.detected_at)
     return process_parking_operation(
         db=db,
         plate=data.plate,
@@ -451,7 +438,7 @@ def register_manual_exit(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    detected_at = normalize_detected_at(data.detected_at)
+    detected_at = normalize_business_datetime(data.detected_at)
     return process_parking_operation(
         db=db,
         plate=data.plate,
@@ -482,7 +469,7 @@ def get_parking_state(db: Session = Depends(get_db)):
             camera_id=None,
             source=None,
             entered_at=ticket.hora_entrada,
-            parking_minutes=calculate_minutes(ticket.hora_entrada),
+            parking_minutes=calculate_business_minutes(ticket.hora_entrada),
         )
         for ticket, vehicle in open_tickets
     ]

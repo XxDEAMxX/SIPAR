@@ -40,10 +40,10 @@ class DetectionWorker:
         logger.info("Inicializando ALPR")
         alpr = create_alpr(self.settings)
 
-        logger.info("Abriendo camara %s", self.settings.camera_index)
-        cap = cv2.VideoCapture(self.settings.camera_index)
+        logger.info("Abriendo fuente de video %s", self.settings.camera_source)
+        cap = cv2.VideoCapture(self.settings.camera_source)
         if not cap.isOpened():
-            logger.error("No se pudo abrir la camara %s", self.settings.camera_index)
+            logger.error("No se pudo abrir la fuente de video %s", self.settings.camera_source)
             return
 
         try:

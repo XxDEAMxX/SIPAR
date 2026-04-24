@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -11,6 +9,7 @@ from model.tickets import Ticket
 from model.turnos import Turno
 from model.users import User
 from schema.cierre_schema import CierreCreate, CierreResponse
+from services.time_service import business_now
 
 
 cierre_router = APIRouter(prefix="/cierres", tags=["Cierres"])
@@ -55,7 +54,7 @@ def crear_cierre(
         turno_id=turno.id,
         total_vehiculos=int(total_vehiculos),
         total_recaudado=float(total_recaudado),
-        fecha_cierre=turno.fecha_fin or datetime.now(),
+        fecha_cierre=turno.fecha_fin or business_now(),
         observaciones=data.observaciones,
     )
     db.add(cierre)
