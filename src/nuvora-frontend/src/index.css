@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+@theme {
+  --color-sipar-bg: #0d1117;
+  --color-sipar-panel: #161b22;
+  --color-sipar-border: #30363d;
+  --color-sipar-amber: #f59e0b;
+  --color-sipar-blue: #3b82f6;
+  --color-sipar-text: #e6edf3;
+  --color-sipar-muted: #8b949e;
+
+  --font-display: "Bebas Neue", "DM Mono", sans-serif;
+  --font-sans: "IBM Plex Sans", "Sora", sans-serif;
+  --font-mono: "JetBrains Mono", "Space Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-sipar-text);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(59, 130, 246, 0.18), transparent 35%),
+    radial-gradient(circle at 85% 15%, rgba(245, 158, 11, 0.14), transparent 30%),
+    #0d1117;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid rgba(245, 158, 11, 0.9);
+  outline-offset: 2px;
+}
+
+.ambient-grid {
+  background-image:
+    linear-gradient(rgba(48, 54, 61, 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(48, 54, 61, 0.35) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+
+.scan-gradient {
+  position: absolute;
+  inset: auto 0 0;
+  height: 45%;
+  background: linear-gradient(180deg, transparent, rgba(245, 158, 11, 0.08));
+  pointer-events: none;
+}
+
+.glass-card {
+  background: linear-gradient(140deg, rgba(22, 27, 34, 0.84), rgba(22, 27, 34, 0.62));
+  backdrop-filter: blur(10px);
+  border-radius: 1rem;
+  box-shadow:
+    0 0 0 1px rgba(48, 54, 61, 0.35),
+    0 25px 38px rgba(0, 0, 0, 0.4);
+}
+
+.input-sipar {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(48, 54, 61, 0.95);
+  background: rgba(13, 17, 23, 0.78);
+  color: var(--color-sipar-text);
+  padding: 0.65rem 0.85rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input-sipar::placeholder {
+  color: rgba(139, 148, 158, 0.8);
+}
+
+.input-sipar:hover {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.input-sipar:focus {
+  border-color: rgba(245, 158, 11, 0.8);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-danger {
+  border-radius: 0.75rem;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  justify-content: center;
+  font-weight: 600;
+  padding: 0.58rem 0.95rem;
+  transition: all 0.22s ease;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(234, 179, 8, 0.85));
+  color: #111827;
+  box-shadow: 0 0 22px rgba(245, 158, 11, 0.22);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 28px rgba(245, 158, 11, 0.32);
+}
+
+.btn-secondary {
+  border-color: rgba(48, 54, 61, 0.95);
+  color: var(--color-sipar-muted);
+  background: rgba(13, 17, 23, 0.9);
+}
+
+.btn-secondary:hover {
+  border-color: rgba(245, 158, 11, 0.45);
+  color: var(--color-sipar-text);
+}
+
+.btn-danger {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.25);
+}
+
+.btn-danger:hover {
+  border-color: rgba(239, 68, 68, 0.8);
+  background: rgba(127, 29, 29, 0.35);
+}
+
+.camera-placeholder {
+  border: 1px dashed rgba(48, 54, 61, 0.92);
+  border-radius: 0.9rem;
+  min-height: 220px;
+  display: grid;
+  place-content: center;
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(circle at 30% 10%, rgba(59, 130, 246, 0.08), transparent 55%);
+}
+
+.scan-line {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.8), transparent);
+  animation: scan 2.8s linear infinite;
+}
+
+.pulse-dot {
+  animation: pulse 1.4s infinite;
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.45s ease both;
+}
+
+.animate-shake {
+  animation: shake 0.35s ease both;
+}
+
+@keyframes scan {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(220px);
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(245, 158, 11, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(5px);
+  }
+  75% {
+    transform: translateX(-5px);
+  }
+}
