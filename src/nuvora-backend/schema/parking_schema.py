@@ -23,8 +23,14 @@ class ParkingDetectionCreate(BaseModel):
     detected_at: datetime | None = None
 
 
-class ParkingDetectionResponse(BaseModel):
-    detection_id: int
+class ParkingManualOperationCreate(BaseModel):
+    plate: str
+    camera_id: str | None = None
+    detected_at: datetime | None = None
+
+
+class ParkingOperationResponse(BaseModel):
+    detection_id: int | None = None
     event_id: int
     ticket_id: int | None = None
     vehicle_id: int | None = None
@@ -32,9 +38,19 @@ class ParkingDetectionResponse(BaseModel):
     direction: Direction
     status: ProcessingStatus
     message: str
+    camera_id: str | None = None
+    source: str | None = None
     detected_at: datetime
     open_sessions: int
     parking_minutes: int | None = None
+
+
+class ParkingDetectionResponse(ParkingOperationResponse):
+    detection_id: int
+
+
+class ParkingManualResponse(ParkingOperationResponse):
+    pass
 
 
 class ActiveParkingSession(BaseModel):

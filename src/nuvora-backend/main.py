@@ -22,8 +22,13 @@ _load_env_file(_APP_DIR / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from router.cierre_router import cierre_router
+from router.client_router import client_router
 from router.parking_router import parking_router
 from router.plate_detection_router import plate_detection_router
+from router.tarifa_router import tarifa_router
+from router.ticket_router import ticket_router
+from router.turno_router import turno_router
 from router.user_router import user
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -31,12 +36,16 @@ from werkzeug.security import generate_password_hash
 
 from config.db import Base, SessionLocal, engine
 import model.parking_events
+import model.cierres
+import model.clientes
+import model.tarifas
 import model.users
 import model.tickets
 import model.turnos
 import model.vehiculos
 import model.plate_detections
 from model.users import User
+from services.ticket_schema_migration import migrate_ticket_schema
 
 
 logger = logging.getLogger(__name__)
@@ -118,9 +127,15 @@ app.add_middleware(
 # Crear las tablas en la base de datos
 wait_for_database()
 Base.metadata.create_all(bind=engine)
+migrate_ticket_schema(engine)
 bootstrap_admin_user()
 
 # Incluir el enrutador de usuarios
 app.include_router(user, prefix="/api")
+app.include_router(client_router, prefix="/api")
+app.include_router(cierre_router, prefix="/api")
 app.include_router(plate_detection_router, prefix="/api")
 app.include_router(parking_router, prefix="/api")
+app.include_router(turno_router, prefix="/api")
+app.include_router(ticket_router, prefix="/api")
+app.include_router(tarifa_router, prefix="/api")

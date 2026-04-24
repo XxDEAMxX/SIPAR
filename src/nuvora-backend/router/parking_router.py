@@ -1,6 +1,5 @@
 import json
 from datetime import datetime, timezone
-from decimal import Decimal
 from queue import Empty, Full, Queue
 from threading import Lock
 
@@ -8,20 +7,26 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from config.auth import verify_service_api_key
+from config.auth import get_current_user, verify_service_api_key
 from config.db import SessionLocal
 from model.parking_events import ParkingEvent
 from model.plate_detections import PlateDetection
 from model.tickets import Ticket
+from model.turnos import Turno
+from model.users import User
 from model.vehiculos import Vehiculo
-from services.plate_resolution import resolve_plate
 from schema.parking_schema import (
     ActiveParkingSession,
     ParkingDetectionCreate,
     ParkingDetectionResponse,
     ParkingEventItem,
+    ParkingManualOperationCreate,
+    ParkingManualResponse,
+    ParkingOperationResponse,
     ParkingStateResponse,
 )
+from services.plate_resolution import resolve_plate
+from services.tariff_service import calculate_tariff_charge
 
 
 parking_router = APIRouter(prefix="/parking", tags=["Parqueadero"])
@@ -95,6 +100,20 @@ def get_open_ticket(db: Session, vehicle_id: int) -> Ticket | None:
     )
 
 
+def get_latest_open_turno_id(db: Session) -> int | None:
+    turno = (
+        db.query(Turno)
+        .filter(Turno.estado == "abierto")
+        .order_by(Turno.fecha_inicio.desc(), Turno.id.desc())
+        .first()
+    )
+    return turno.id if turno else None
+
+
+def build_ticket_code(ticket_id: int, detected_at: datetime) -> str:
+    return f"TKT-{detected_at.strftime('%Y%m%d')}-{ticket_id:06d}"
+
+
 def get_preferred_known_plates(db: Session, candidate_plates: tuple[str, ...]) -> list[str]:
     if not candidate_plates:
         return []
@@ -132,23 +151,239 @@ def build_event_payload(event: ParkingEvent, parking_minutes: int | None) -> Par
     )
 
 
-@parking_router.post("/detections", response_model=ParkingDetectionResponse, dependencies=[Depends(verify_service_api_key)])
-def process_detection(data: ParkingDetectionCreate, db: Session = Depends(get_db)):
-    detected_at = normalize_detected_at(data.detected_at)
-    initial_resolution = resolve_plate(data.plate)
-    raw_plate = initial_resolution.raw_plate or data.plate.strip().upper()
+def resolve_operation_plate(
+    db: Session,
+    plate: str,
+    direction: str,
+    allow_context_matching: bool,
+):
+    initial_resolution = resolve_plate(plate)
+    raw_plate = initial_resolution.raw_plate or plate.strip().upper()
+
+    if not allow_context_matching:
+        return raw_plate, initial_resolution
+
     preferred_plates = get_preferred_known_plates(
         db,
         tuple(candidate.plate for candidate in initial_resolution.candidates),
     )
     has_exact_candidate = any(candidate.corrections == 0 for candidate in initial_resolution.candidates)
-    context_plates = preferred_plates if data.direction == "exit" or not has_exact_candidate else []
-    resolution = resolve_plate(data.plate, context_plates)
-    normalized_plate = resolution.resolved_plate or raw_plate
+    context_plates = preferred_plates if direction == "exit" or not has_exact_candidate else []
+    return raw_plate, resolve_plate(plate, context_plates)
+
+
+def finalize_operation(
+    db: Session,
+    event: ParkingEvent,
+    ticket: Ticket | None,
+    vehicle: Vehiculo | None,
+    parking_minutes: int | None,
+    detection_id: int | None,
+) -> ParkingOperationResponse:
+    db.commit()
+    db.refresh(event)
+    if ticket:
+        db.refresh(ticket)
+
+    open_sessions = db.query(Ticket).filter(Ticket.estado == "abierto").count()
+    event_payload = build_event_payload(event, parking_minutes=parking_minutes)
+    broker.publish(
+        {
+            "type": "parking_event",
+            "event": event_payload.model_dump(mode="json"),
+            "open_sessions": open_sessions,
+        }
+    )
+
+    return ParkingOperationResponse(
+        detection_id=detection_id,
+        event_id=event.id,
+        ticket_id=ticket.id if ticket else None,
+        vehicle_id=vehicle.id if vehicle else None,
+        plate=event.plate,
+        direction=event.direction,
+        status=event.status,
+        message=event.message,
+        camera_id=event.camera_id,
+        source=event.source,
+        detected_at=event.detected_at,
+        open_sessions=open_sessions,
+        parking_minutes=parking_minutes,
+    )
+
+
+def process_parking_operation(
+    db: Session,
+    *,
+    plate: str,
+    direction: str,
+    detected_at: datetime,
+    camera_id: str | None,
+    source: str,
+    detection: PlateDetection | None = None,
+    allow_context_matching: bool,
+) -> ParkingOperationResponse:
+    raw_plate, resolution = resolve_operation_plate(
+        db=db,
+        plate=plate,
+        direction=direction,
+        allow_context_matching=allow_context_matching,
+    )
+
+    if resolution.resolved_plate is None:
+        ignored_event = ParkingEvent(
+            vehiculo_id=None,
+            ticket_id=None,
+            detection_id=detection.id if detection else None,
+            plate=raw_plate,
+            direction=direction,
+            status="ignored",
+            message=resolution.reason or "La deteccion fue descartada.",
+            camera_id=camera_id,
+            source=source,
+            detected_at=detected_at,
+        )
+        db.add(ignored_event)
+        return finalize_operation(
+            db=db,
+            event=ignored_event,
+            ticket=None,
+            vehicle=None,
+            parking_minutes=None,
+            detection_id=detection.id if detection else None,
+        )
+
+    normalized_plate = resolution.resolved_plate
+    vehicle = db.query(Vehiculo).filter(Vehiculo.placa == normalized_plate).first()
+    if vehicle is None:
+        vehicle = Vehiculo(placa=normalized_plate)
+        db.add(vehicle)
+        db.flush()
+
+    ticket = get_open_ticket(db, vehicle.id)
+    parking_minutes: int | None = None
+    turno_abierto_id = get_latest_open_turno_id(db)
+
+    if direction == "entry":
+        if ticket:
+            status = "ignored"
+            message = "La placa ya tiene una entrada activa."
+            parking_minutes = calculate_minutes(ticket.hora_entrada, detected_at)
+        else:
+            ticket = Ticket(
+                codigo_ticket=None,
+                vehiculo_id=vehicle.id,
+                placa_snapshot=normalized_plate,
+                turno_id=turno_abierto_id,
+                hora_entrada=detected_at,
+                estado="abierto",
+            )
+            db.add(ticket)
+            db.flush()
+
+            processed_event = ParkingEvent(
+                vehiculo_id=vehicle.id,
+                ticket_id=ticket.id,
+                detection_id=detection.id if detection else None,
+                plate=normalized_plate,
+                direction=direction,
+                status="processed",
+                message="Entrada registrada correctamente.",
+                camera_id=camera_id,
+                source=source,
+                detected_at=detected_at,
+            )
+            db.add(processed_event)
+            db.flush()
+
+            ticket.codigo_ticket = build_ticket_code(ticket.id, detected_at)
+            ticket.entry_event_id = processed_event.id
+            return finalize_operation(
+                db=db,
+                event=processed_event,
+                ticket=ticket,
+                vehicle=vehicle,
+                parking_minutes=None,
+                detection_id=detection.id if detection else None,
+            )
+    else:
+        if ticket is None:
+            status = "ignored"
+            message = "No existe una entrada activa para esta placa."
+        else:
+            parking_minutes = calculate_minutes(ticket.hora_entrada, detected_at)
+            tariff_calculation = calculate_tariff_charge(db, detected_at, parking_minutes)
+            processed_event = ParkingEvent(
+                vehiculo_id=vehicle.id,
+                ticket_id=ticket.id,
+                detection_id=detection.id if detection else None,
+                plate=normalized_plate,
+                direction=direction,
+                status="processed",
+                message="Salida registrada correctamente.",
+                camera_id=camera_id,
+                source=source,
+                detected_at=detected_at,
+            )
+            db.add(processed_event)
+            db.flush()
+
+            ticket.hora_salida = detected_at
+            ticket.estado = "cerrado"
+            ticket.tarifa_id = tariff_calculation.tarifa.id if tariff_calculation.tarifa else None
+            ticket.minutos_cobrados = tariff_calculation.minutos_cobrados
+            ticket.monto_total = tariff_calculation.monto_total
+            ticket.turno_cierre_id = turno_abierto_id
+            ticket.exit_event_id = processed_event.id
+            if tariff_calculation.tarifa:
+                processed_event.message = (
+                    f"Salida registrada correctamente. "
+                    f"Tarifa {tariff_calculation.tarifa.tipo} aplicada por {ticket.monto_total}."
+                )
+            else:
+                processed_event.message = "Salida registrada correctamente. No habia una tarifa activa configurada."
+            return finalize_operation(
+                db=db,
+                event=processed_event,
+                ticket=ticket,
+                vehicle=vehicle,
+                parking_minutes=parking_minutes,
+                detection_id=detection.id if detection else None,
+            )
+
+    if resolution.corrections:
+        message = f"Se asume la placa {normalized_plate}. {message}"
+
+    ignored_event = ParkingEvent(
+        vehiculo_id=vehicle.id,
+        ticket_id=ticket.id if ticket else None,
+        detection_id=detection.id if detection else None,
+        plate=normalized_plate,
+        direction=direction,
+        status=status,
+        message=message,
+        camera_id=camera_id,
+        source=source,
+        detected_at=detected_at,
+    )
+    db.add(ignored_event)
+    return finalize_operation(
+        db=db,
+        event=ignored_event,
+        ticket=ticket,
+        vehicle=vehicle,
+        parking_minutes=parking_minutes,
+        detection_id=detection.id if detection else None,
+    )
+
+
+@parking_router.post("/detections", response_model=ParkingDetectionResponse, dependencies=[Depends(verify_service_api_key)])
+def process_detection(data: ParkingDetectionCreate, db: Session = Depends(get_db)):
+    detected_at = normalize_detected_at(data.detected_at)
     bbox = data.bounding_box
 
     detection = PlateDetection(
-        plate=raw_plate,
+        plate=data.plate.strip().upper(),
         plate_confidence=data.plate_confidence,
         detection_confidence=data.detection_confidence,
         region=data.region,
@@ -164,127 +399,67 @@ def process_detection(data: ParkingDetectionCreate, db: Session = Depends(get_db
     db.add(detection)
     db.flush()
 
-    if resolution.resolved_plate is None:
-        event = ParkingEvent(
-            vehiculo_id=None,
-            ticket_id=None,
-            detection_id=detection.id,
-            plate=raw_plate,
-            direction=data.direction,
-            status="ignored",
-            message=resolution.reason or "La detección fue descartada.",
-            camera_id=data.camera_id,
-            source=data.source or f"vehicle-{data.direction}-service",
-            detected_at=detected_at,
-        )
-        db.add(event)
-        db.commit()
-        db.refresh(event)
-
-        open_sessions = db.query(Ticket).filter(Ticket.estado == "abierto").count()
-        event_payload = build_event_payload(event, parking_minutes=None)
-        broker.publish(
-            {
-                "type": "parking_event",
-                "event": event_payload.model_dump(mode="json"),
-                "open_sessions": open_sessions,
-            }
-        )
-
-        return ParkingDetectionResponse(
-            detection_id=detection.id,
-            event_id=event.id,
-            ticket_id=None,
-            vehicle_id=None,
-            plate=raw_plate,
-            direction=data.direction,
-            status="ignored",
-            message=event.message,
-            detected_at=detected_at,
-            open_sessions=open_sessions,
-            parking_minutes=None,
-        )
-
-    vehicle = db.query(Vehiculo).filter(Vehiculo.placa == normalized_plate).first()
-    if vehicle is None:
-        vehicle = Vehiculo(placa=normalized_plate)
-        db.add(vehicle)
-        db.flush()
-
-    ticket = get_open_ticket(db, vehicle.id)
-    parking_minutes: int | None = None
-
-    if data.direction == "entry":
-        if ticket:
-            status = "ignored"
-            message = "La placa ya tiene una entrada activa."
-            parking_minutes = calculate_minutes(ticket.hora_entrada, detected_at)
-        else:
-            ticket = Ticket(
-                vehiculo_id=vehicle.id,
-                hora_entrada=detected_at,
-                estado="abierto",
-            )
-            db.add(ticket)
-            db.flush()
-            status = "processed"
-            message = "Entrada registrada correctamente."
-    else:
-        if ticket is None:
-            status = "ignored"
-            message = "No existe una entrada activa para esta placa."
-        else:
-            ticket.hora_salida = detected_at
-            ticket.estado = "cerrado"
-            ticket.monto_total = Decimal("0.00")
-            parking_minutes = calculate_minutes(ticket.hora_entrada, detected_at)
-            status = "processed"
-            message = "Salida registrada correctamente."
-
-    if resolution.corrections:
-        if status == "processed":
-            message = f"{message[:-1]} como {normalized_plate}."
-        else:
-            message = f"Se asume la placa {normalized_plate}. {message}"
-
-    event = ParkingEvent(
-        vehiculo_id=vehicle.id,
-        ticket_id=ticket.id if ticket else None,
-        detection_id=detection.id,
-        plate=normalized_plate,
+    result = process_parking_operation(
+        db=db,
+        plate=data.plate,
         direction=data.direction,
-        status=status,
-        message=message,
+        detected_at=detected_at,
         camera_id=data.camera_id,
         source=data.source or f"vehicle-{data.direction}-service",
-        detected_at=detected_at,
-    )
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-
-    open_sessions = db.query(Ticket).filter(Ticket.estado == "abierto").count()
-    event_payload = build_event_payload(event, parking_minutes=parking_minutes)
-    broker.publish(
-        {
-            "type": "parking_event",
-            "event": event_payload.model_dump(mode="json"),
-            "open_sessions": open_sessions,
-        }
+        detection=detection,
+        allow_context_matching=True,
     )
 
     return ParkingDetectionResponse(
         detection_id=detection.id,
-        event_id=event.id,
-        ticket_id=ticket.id if ticket else None,
-        vehicle_id=vehicle.id,
-        plate=normalized_plate,
-        direction=data.direction,
-        status=status,
-        message=message,
+        event_id=result.event_id,
+        ticket_id=result.ticket_id,
+        vehicle_id=result.vehicle_id,
+        plate=result.plate,
+        direction=result.direction,
+        status=result.status,
+        message=result.message,
+        camera_id=result.camera_id,
+        source=result.source,
+        detected_at=result.detected_at,
+        open_sessions=result.open_sessions,
+        parking_minutes=result.parking_minutes,
+    )
+
+
+@parking_router.post("/manual/entry", response_model=ParkingManualResponse)
+def register_manual_entry(
+    data: ParkingManualOperationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    detected_at = normalize_detected_at(data.detected_at)
+    return process_parking_operation(
+        db=db,
+        plate=data.plate,
+        direction="entry",
         detected_at=detected_at,
-        open_sessions=open_sessions,
-        parking_minutes=parking_minutes,
+        camera_id=data.camera_id,
+        source=f"manual:{current_user.usuario}",
+        allow_context_matching=False,
+    )
+
+
+@parking_router.post("/manual/exit", response_model=ParkingManualResponse)
+def register_manual_exit(
+    data: ParkingManualOperationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    detected_at = normalize_detected_at(data.detected_at)
+    return process_parking_operation(
+        db=db,
+        plate=data.plate,
+        direction="exit",
+        detected_at=detected_at,
+        camera_id=data.camera_id,
+        source=f"manual:{current_user.usuario}",
+        allow_context_matching=False,
     )
 
 
