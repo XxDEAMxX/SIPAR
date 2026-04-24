@@ -4,13 +4,14 @@ from typing import Any
 import httpx
 
 
-logger = logging.getLogger("vehicle-entry-service")
+logger = logging.getLogger("vehicle-exit-service")
 
 
 class BackendClient:
-    def __init__(self, endpoint: str, timeout_seconds: float) -> None:
+    def __init__(self, endpoint: str, timeout_seconds: float, service_api_key: str = "") -> None:
         self.endpoint = endpoint
         self.timeout_seconds = timeout_seconds
+        self.service_api_key = service_api_key
 
     def send_detection(self, payload: dict[str, Any]) -> None:
         if not self.endpoint:
@@ -24,9 +25,18 @@ class BackendClient:
         else:
             urls_to_try = [f"{base_url}/", base_url]
 
+        headers = {}
+        if self.service_api_key:
+            headers["X-API-Key"] = self.service_api_key
+
         for url in urls_to_try:
             try:
-                response = httpx.post(url, json=payload, timeout=self.timeout_seconds)
+                response = httpx.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout_seconds,
+                )
                 if response.status_code == 404:
                     continue
                 response.raise_for_status()

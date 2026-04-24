@@ -8,7 +8,7 @@ from alpr_engine import DetectionProcessor, create_alpr
 from config import Settings
 
 
-logger = logging.getLogger("vehicle-entry-service")
+logger = logging.getLogger("vehicle-exit-service")
 
 
 class DetectionWorker:
@@ -51,6 +51,7 @@ class DetectionWorker:
                 ok, frame = cap.read()
                 if not ok:
                     logger.warning("No se pudo leer frame")
+                    self.processor.flush_pending()
                     time.sleep(0.2)
                     continue
 
@@ -58,13 +59,16 @@ class DetectionWorker:
                     results = alpr.predict(frame)
                 except Exception:
                     logger.exception("Error en inferencia")
+                    self.processor.flush_pending()
                     time.sleep(0.2)
                     continue
 
                 for result in results:
                     self.processor.handle_result(result)
 
+                self.processor.flush_pending()
                 time.sleep(self.settings.capture_interval_seconds)
         finally:
+            self.processor.flush_pending()
             cap.release()
             logger.info("Camara liberada")

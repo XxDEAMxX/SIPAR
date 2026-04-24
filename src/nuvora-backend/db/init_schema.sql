@@ -87,6 +87,28 @@ CREATE TABLE IF NOT EXISTS placas_detectadas (
   INDEX idx_placas_detectadas_detected_at (detected_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Tabla de eventos procesados del parqueadero
+CREATE TABLE IF NOT EXISTS parking_events (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  vehiculo_id INT NULL,
+  ticket_id INT NULL,
+  detection_id INT NULL,
+  plate VARCHAR(20) NOT NULL,
+  direction ENUM('entry','exit') NOT NULL,
+  status ENUM('processed','ignored','error') NOT NULL,
+  message TEXT NOT NULL,
+  camera_id VARCHAR(50) NULL,
+  source VARCHAR(50) NULL,
+  detected_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_parking_events_plate (plate),
+  INDEX idx_parking_events_ticket_id (ticket_id),
+  INDEX idx_parking_events_detected_at (detected_at),
+  CONSTRAINT fk_parking_events_vehicle FOREIGN KEY (vehiculo_id) REFERENCES vehiculos(id) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_parking_events_ticket FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_parking_events_detection FOREIGN KEY (detection_id) REFERENCES placas_detectadas(id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Tabla cierres de caja
 CREATE TABLE IF NOT EXISTS cierres_caja (
   id INT AUTO_INCREMENT PRIMARY KEY,

@@ -100,7 +100,7 @@ def require_vigilante(current_user: User = Depends(get_current_user)) -> User:
 
 # ========== AUTENTICACIÓN PARA MICROSERVICIOS ==========
 
-def verify_service_api_key(x_api_key: str = Header(...)) -> bool:
+def verify_service_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
     """
     Verifica que la API Key del microservicio sea válida.
     Se espera que el header X-API-Key contenga la clave correcta.

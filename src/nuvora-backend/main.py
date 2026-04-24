@@ -1,18 +1,40 @@
 import logging
 import os
 import time
+from pathlib import Path
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_APP_DIR = Path(__file__).resolve().parent
+_load_env_file(_APP_DIR.parent / ".env")
+_load_env_file(_APP_DIR / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from router.user_router import user
+from router.parking_router import parking_router
 from router.plate_detection_router import plate_detection_router
+from router.user_router import user
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from werkzeug.security import generate_password_hash
 
 from config.db import Base, SessionLocal, engine
+import model.parking_events
 import model.users
+import model.tickets
 import model.turnos
+import model.vehiculos
 import model.plate_detections
 from model.users import User
 
@@ -101,3 +123,4 @@ bootstrap_admin_user()
 # Incluir el enrutador de usuarios
 app.include_router(user, prefix="/api")
 app.include_router(plate_detection_router, prefix="/api")
+app.include_router(parking_router, prefix="/api")
