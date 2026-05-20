@@ -4,6 +4,9 @@ import { api, clearToken, getApiUrl, getToken, saveToken } from "./api";
 const TOTAL_SPACES = 58;
 const ENTRY_CAMERA_STREAM_URL = "http://127.0.0.1:8010/cameras/entrada/stream";
 const EXIT_CAMERA_STREAM_URL = "http://127.0.0.1:8010/cameras/salida/stream";
+const SLOT_DETECTION_API_URL = import.meta.env.VITE_SLOT_DETECTION_API_URL || "http://127.0.0.1:8020";
+const SLOT_STATE_URL = `${SLOT_DETECTION_API_URL}/slots/state`;
+const SLOT_STREAM_URL = `${SLOT_DETECTION_API_URL}/slots/stream`;
 
 const ICON_PATHS = {
   car: "M3 13l2-5a3 3 0 0 1 2.8-2h8.4A3 3 0 0 1 19 8l2 5v6h-2a2 2 0 0 1-4 0H9a2 2 0 0 1-4 0H3v-6Zm4.8-5a1 1 0 0 0-.93.63L5.52 12h12.96l-1.35-3.37A1 1 0 0 0 16.2 8H7.8ZM7 17.5A1.5 1.5 0 1 0 7 20.5 1.5 1.5 0 0 0 7 17.5Zm10 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z",
@@ -19,6 +22,7 @@ const ICON_PATHS = {
   warning: "M12 2 1 21h22L12 2Zm1 15h-2v2h2v-2Zm0-8h-2v6h2V9Z",
   spinner: "M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2Z",
   pencil: "M4 17.25V20h2.75l8.11-8.11-2.75-2.75L4 17.25Zm11.71-6.04a1 1 0 0 0 0-1.42l-1.5-1.5a1 1 0 0 0-1.42 0l-.88.88 2.75 2.75.88-.71ZM19 20H11v-2h8v2Z",
+  slots: "M3 4h8v7H3V4Zm10 0h8v7h-8V4ZM3 13h8v7H3v-7Zm10 0h8v7h-8v-7ZM5 6v3h4V6H5Zm10 0v3h4V6h-4ZM5 15v3h4v-3H5Zm10 0v3h4v-3h-4Z",
 };
 
 const vehicleLabels = {
@@ -48,6 +52,16 @@ const initialTarifaForm = {
 const initialTarifaFilters = {
   tipo: "all",
   activas: "all",
+};
+
+const initialSlotState = {
+  connected: false,
+  updated_at: null,
+  total: 0,
+  occupied: 0,
+  available: 0,
+  last_error: null,
+  slots: [],
 };
 
 function Icon({ name, size = 20, className = "" }) {
@@ -199,6 +213,9 @@ export default function App() {
   const [isTarifasLoading, setIsTarifasLoading] = useState(false);
   const [isTarifaSubmitting, setIsTarifaSubmitting] = useState(false);
   const [tarifaErrorMessage, setTarifaErrorMessage] = useState("");
+  const [slotState, setSlotState] = useState(initialSlotState);
+  const [isSlotsLoading, setIsSlotsLoading] = useState(false);
+  const [slotsErrorMessage, setSlotsErrorMessage] = useState("");
   const eventSourceRef = useRef(null);
   const refreshTimeoutRef = useRef(null);
 
@@ -305,6 +322,31 @@ export default function App() {
   }, [activeSection, isAdmin]);
 
   useEffect(() => {
+    if (!session.token || activeSection !== "cupos") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let intervalId = null;
+
+    async function bootstrapSlots() {
+      await refreshSlots({ silent: false, cancelled: () => cancelled });
+      intervalId = setInterval(() => {
+        refreshSlots({ silent: true, cancelled: () => cancelled });
+      }, 3000);
+    }
+
+    bootstrapSlots();
+
+    return () => {
+      cancelled = true;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [activeSection, session.token]);
+
+  useEffect(() => {
     if (!session.token || activeSection !== "tarifas" || !isAdmin) {
       return undefined;
     }
@@ -388,6 +430,31 @@ export default function App() {
     }
   }
 
+  async function refreshSlots({ silent = false, cancelled = () => false } = {}) {
+    if (!silent) {
+      setIsSlotsLoading(true);
+    }
+    setSlotsErrorMessage("");
+    try {
+      const response = await fetch(SLOT_STATE_URL);
+      if (!response.ok) {
+        throw new Error(`Servicio de cupos respondio ${response.status}`);
+      }
+      const data = await response.json();
+      if (!cancelled()) {
+        setSlotState(data);
+      }
+    } catch (error) {
+      if (!cancelled()) {
+        setSlotsErrorMessage(error?.message || "No fue posible cargar los cupos.");
+      }
+    } finally {
+      if (!silent && !cancelled()) {
+        setIsSlotsLoading(false);
+      }
+    }
+  }
+
   async function handleLoginSubmit(event) {
     event.preventDefault();
     setIsAuthLoading(true);
@@ -425,6 +492,8 @@ export default function App() {
     setEditingTarifaId(null);
     setTarifaFilters(initialTarifaFilters);
     setTarifaErrorMessage("");
+    setSlotState(initialSlotState);
+    setSlotsErrorMessage("");
   }
 
   async function handleManualRegister(direction) {
@@ -567,6 +636,33 @@ export default function App() {
     return { total, activas, nocturnas };
   }, [tarifas]);
 
+  const pageTitle =
+    activeSection === "dashboard"
+      ? "Panel de ingreso y salida"
+      : activeSection === "cupos"
+        ? "Ocupacion de cupos"
+        : "Gestion de tarifas";
+
+  const refreshLabel =
+    activeSection === "dashboard"
+      ? "Actualizar panel"
+      : activeSection === "cupos"
+        ? "Actualizar cupos"
+        : "Actualizar tarifas";
+
+  const isRefreshing =
+    activeSection === "dashboard" ? isLoading : activeSection === "cupos" ? isSlotsLoading : isTarifasLoading;
+
+  function refreshActiveSection() {
+    if (activeSection === "dashboard") {
+      refreshDashboard();
+    } else if (activeSection === "cupos") {
+      refreshSlots();
+    } else {
+      refreshTarifas();
+    }
+  }
+
   if (!session.token || !session.user) {
     return (
       <LoginScreen
@@ -599,6 +695,12 @@ export default function App() {
             active={activeSection === "dashboard"}
             onClick={() => setActiveSection("dashboard")}
           />
+          <SidebarItem
+            icon="slots"
+            label="Cupos"
+            active={activeSection === "cupos"}
+            onClick={() => setActiveSection("cupos")}
+          />
           {isAdmin ? (
             <SidebarItem
               icon="card"
@@ -624,7 +726,7 @@ export default function App() {
       <main className="dashboard">
         <header className="dashboard__header">
           <div>
-            <h2>{activeSection === "dashboard" ? "Panel de ingreso y salida" : "Gestion de tarifas"}</h2>
+            <h2>{pageTitle}</h2>
           </div>
           <div className="header-actions">
             <button type="button" className="secondary-button" onClick={handleLogout}>
@@ -634,22 +736,14 @@ export default function App() {
             <button
               type="button"
               className="primary-button"
-              onClick={() => (activeSection === "dashboard" ? refreshDashboard() : refreshTarifas())}
+              onClick={refreshActiveSection}
             >
               <Icon
-                name={
-                  activeSection === "dashboard"
-                    ? isLoading
-                      ? "spinner"
-                      : "plus"
-                    : isTarifasLoading
-                      ? "spinner"
-                      : "plus"
-                }
+                name={isRefreshing ? "spinner" : "plus"}
                 size={18}
-                className={isLoading || isTarifasLoading ? "spin" : ""}
+                className={isRefreshing ? "spin" : ""}
               />
-              {activeSection === "dashboard" ? "Actualizar panel" : "Actualizar tarifas"}
+              {refreshLabel}
             </button>
           </div>
         </header>
@@ -821,6 +915,13 @@ export default function App() {
               </div>
             </section>
           </>
+        ) : activeSection === "cupos" ? (
+          <CuposSection
+            slotState={slotState}
+            errorMessage={slotsErrorMessage}
+            isLoading={isSlotsLoading}
+            streamUrl={SLOT_STREAM_URL}
+          />
         ) : (
           <TarifasSection
             tarifas={tarifas}
@@ -961,6 +1062,150 @@ function CameraCard({ title, badge, event, streamUrl }) {
         <div className="camera-card__footer">
           <span>Placa: {event?.plate || "---"}</span>
           <span>{event ? formatTime(event.detected_at) : "--"}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CuposSection({ slotState, errorMessage, isLoading, streamUrl }) {
+  const slots = slotState.slots || [];
+  const occupancyRate = slotState.total ? Math.round((slotState.occupied / slotState.total) * 100) : 0;
+  const updatedAt = slotState.updated_at ? formatDateTime(slotState.updated_at) : "--";
+
+  return (
+    <>
+      {errorMessage && (
+        <section className="alerts">
+          <Alert type="error" message={errorMessage} />
+        </section>
+      )}
+
+      <section className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-card__content">
+            <div>
+              <p>Cupos totales</p>
+              <strong>{slotState.total}</strong>
+            </div>
+            <div className="stat-card__icon">
+              <Icon name="slots" size={22} />
+            </div>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card__content">
+            <div>
+              <p>Ocupados</p>
+              <strong>{slotState.occupied}</strong>
+            </div>
+            <div className="stat-card__icon">
+              <Icon name="car" size={22} />
+            </div>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card__content">
+            <div>
+              <p>Libres</p>
+              <strong>{slotState.available}</strong>
+            </div>
+            <div className="stat-card__icon">
+              <Icon name="check" size={22} />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="content-grid content-grid--cupos">
+        <SlotStreamCard streamUrl={streamUrl} connected={slotState.connected} lastError={slotState.last_error} />
+
+        <div className="panel-card panel-card--slots">
+          <div className="panel-card__header">
+            <div>
+              <h3>Estado de ocupacion</h3>
+              <p>{isLoading ? "Actualizando lectura..." : `Ultima lectura: ${updatedAt}`}</p>
+            </div>
+            <span className={`pill ${slotState.connected ? "pill--entry" : "pill--warning"}`}>
+              {slotState.connected ? "Camara activa" : "Sin conexion"}
+            </span>
+          </div>
+
+          {slotState.last_error ? <Alert type="error" message={slotState.last_error} /> : null}
+
+          <div className="slots-meter">
+            <div className="slots-meter__header">
+              <span>Ocupacion</span>
+              <strong>{occupancyRate}%</strong>
+            </div>
+            <div className="slots-meter__bar">
+              <span style={{ width: `${occupancyRate}%` }} />
+            </div>
+          </div>
+
+          <div className="slots-legend">
+            <span>
+              <i className="slots-legend__dot slots-legend__dot--free" />
+              Libre
+            </span>
+            <span>
+              <i className="slots-legend__dot slots-legend__dot--occupied" />
+              Ocupado
+            </span>
+          </div>
+
+          <div className="slot-grid">
+            {slots.map((slot) => (
+              <div key={slot.id} className={`slot-item ${slot.occupied ? "slot-item--occupied" : "slot-item--free"}`}>
+                <strong>Cupo {slot.id}</strong>
+                <span>{slot.occupied ? "Ocupado" : "Libre"}</span>
+                <small>Conf. {Math.round((slot.confidence || 0) * 100)}%</small>
+              </div>
+            ))}
+            {!slots.length && (
+              <div className="empty-state slot-grid__empty">
+                {isLoading ? "Cargando cupos..." : "No hay cupos configurados."}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function SlotStreamCard({ streamUrl, connected, lastError }) {
+  const [streamError, setStreamError] = useState("");
+
+  return (
+    <div className="camera-card camera-card--slots">
+      <div className="camera-card__header">
+        <div>
+          <h3>Camara de cupos</h3>
+          <p>Vista anotada con cupos libres y ocupados.</p>
+        </div>
+        <span className="camera-card__badge">Deteccion en vivo</span>
+      </div>
+      <div className="camera-card__feed camera-card__feed--slots">
+        <div className="camera-card__grid" />
+        {!streamError && streamUrl ? (
+          <img
+            src={streamUrl}
+            alt="Camara de cupos"
+            className="camera-card__media"
+            onError={() => setStreamError("No se pudo cargar el stream de cupos.")}
+            onLoad={() => setStreamError("")}
+          />
+        ) : (
+          <div className="camera-card__center">
+            <Icon name="camera" size={46} className="camera-card__camera-icon" />
+            <p>Camara no disponible</p>
+            <small>{streamError || lastError || "No hay stream configurado para cupos"}</small>
+          </div>
+        )}
+        <div className="camera-card__footer">
+          <span>{connected ? "Servicio conectado" : "Esperando camara"}</span>
+          <span>{SLOT_DETECTION_API_URL}</span>
         </div>
       </div>
     </div>

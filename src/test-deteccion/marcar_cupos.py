@@ -1,13 +1,39 @@
 import cv2
 import json
 import numpy as np
+import os
+import urllib.request
 
-imagen = cv2.imread("park1.png")
-imagen = cv2.resize(imagen, (800, 600))
+SOURCE = os.getenv("MARKER_SOURCE", "http://127.0.0.1:8010/cameras/cupos/snapshot")
+OUTPUT = os.getenv("MARKER_OUTPUT", "cupos.json")
+FRAME_WIDTH = int(os.getenv("MARKER_FRAME_WIDTH", "800"))
+FRAME_HEIGHT = int(os.getenv("MARKER_FRAME_HEIGHT", "600"))
+
+
+def cargar_imagen(source):
+    if source.startswith(("http://", "https://")):
+        with urllib.request.urlopen(source, timeout=8) as response:
+            data = np.asarray(bytearray(response.read()), dtype=np.uint8)
+        frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    else:
+        frame = cv2.imread(source)
+
+    if frame is None:
+        raise RuntimeError(f"No se pudo cargar la imagen base desde {source}")
+    return cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+
+
+imagen = cargar_imagen(SOURCE)
 
 puntos_actuales = []
 cupos = []
 id_cupo = 1
+
+
+def ordenar_puntos(puntos):
+    centro = np.mean(np.array(puntos), axis=0)
+    return sorted(puntos, key=lambda p: np.arctan2(p[1] - centro[1], p[0] - centro[0]))
+
 
 def dibujar():
     copia = imagen.copy()
@@ -49,7 +75,7 @@ while True:
 
     if key == 13:  # ENTER
         if len(puntos_actuales) == 4:
-            cupos.append({"id": id_cupo, "polygon": puntos_actuales.copy()})
+            cupos.append({"id": id_cupo, "polygon": ordenar_puntos(puntos_actuales.copy())})
             print(f"Cupo #{id_cupo} guardado")
             id_cupo += 1
             puntos_actuales = []
@@ -62,8 +88,19 @@ while True:
     elif key == ord('q'):
         break
 
-with open("cupos.json", "w") as f:
-    json.dump({"spots": cupos}, f, indent=2)
+with open(OUTPUT, "w") as f:
+    json.dump(
+        {
+            "frame": {
+                "width": FRAME_WIDTH,
+                "height": FRAME_HEIGHT,
+                "source": SOURCE,
+            },
+            "spots": cupos,
+        },
+        f,
+        indent=2,
+    )
 
-print(f"Guardados {len(cupos)} cupos en cupos.json")
+print(f"Guardados {len(cupos)} cupos en {OUTPUT}")
 cv2.destroyAllWindows()
