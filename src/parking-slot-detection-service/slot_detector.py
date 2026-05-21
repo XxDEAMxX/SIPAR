@@ -51,6 +51,7 @@ class ParkingSlotDetector:
         self._capture = None
         self._static_frame = None
         self._slots: list[dict[str, Any]] = []
+        self._slots_mtime: float | None = None
         self._state = self._empty_state(connected=False, last_error="Servicio no iniciado")
         self._annotated_frame = None
 
@@ -71,6 +72,7 @@ class ParkingSlotDetector:
 
     def reload_slots(self) -> dict[str, Any]:
         slots = self._load_slots()
+        self._slots_mtime = self._get_slots_mtime()
         with self._lock:
             self._slots = slots
             self._state = self._empty_state(
@@ -78,6 +80,20 @@ class ParkingSlotDetector:
                 last_error=self._state.get("last_error"),
             )
         return self.get_state()
+
+    def maybe_reload_slots(self) -> None:
+        current_mtime = self._get_slots_mtime()
+        if current_mtime is None or current_mtime == self._slots_mtime:
+            return
+        slots = self._load_slots()
+        with self._lock:
+            self._slots = slots
+            self._slots_mtime = current_mtime
+
+    def _get_slots_mtime(self) -> float | None:
+        if not self.slots_path.exists():
+            return None
+        return self.slots_path.stat().st_mtime
 
     def get_state(self) -> dict[str, Any]:
         with self._lock:
@@ -199,6 +215,7 @@ class ParkingSlotDetector:
                 continue
 
             while not self._stop_event.is_set():
+                self.maybe_reload_slots()
                 ok, frame = self._read_frame()
                 if not ok or frame is None:
                     self._mark_disconnected("No se pudo leer frame de la camara de cupos")

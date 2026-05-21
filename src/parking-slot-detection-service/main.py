@@ -1,5 +1,5 @@
 import os
-import time
+import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -74,7 +74,7 @@ def reload_slots():
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def generate_annotated_stream():
+async def generate_annotated_stream():
     fps_limit = float(os.getenv("SLOT_STREAM_FPS", "12"))
     frame_interval = 1.0 / fps_limit if fps_limit > 0 else 0.0
 
@@ -90,7 +90,7 @@ def generate_annotated_stream():
         )
 
         if frame_interval > 0:
-            time.sleep(frame_interval)
+            await asyncio.sleep(frame_interval)
 
 
 @app.get("/slots/stream")
