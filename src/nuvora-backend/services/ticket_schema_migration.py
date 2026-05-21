@@ -43,6 +43,13 @@ def _index_exists(connection, table_name: str, index_name: str) -> bool:
 
 def migrate_ticket_schema(engine: Engine) -> None:
     with engine.begin() as connection:
+        if not _column_exists(connection, "vehiculos", "tipo_vehiculo"):
+            connection.execute(
+                text("ALTER TABLE vehiculos ADD COLUMN tipo_vehiculo VARCHAR(30) NOT NULL DEFAULT 'automovil' AFTER placa")
+            )
+        if not _index_exists(connection, "vehiculos", "ix_vehiculos_tipo_vehiculo"):
+            connection.execute(text("ALTER TABLE vehiculos ADD INDEX ix_vehiculos_tipo_vehiculo (tipo_vehiculo)"))
+
         connection.execute(
             text(
                 """

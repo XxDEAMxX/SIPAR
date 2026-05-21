@@ -1,4 +1,7 @@
+from datetime import datetime, time, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from config.auth import get_current_user, require_cajero
@@ -6,7 +9,9 @@ from config.db import SessionLocal
 from model.tarifas import Tarifa
 from model.tickets import TICKET_STATE, Ticket
 from model.users import User
-from schema.ticket_schema import TicketResponse, TicketUpdate
+from model.vehiculos import Vehiculo
+from schema.ticket_schema import DailyTicketHistoryItem, DailyTicketHistoryResponse, TicketResponse, TicketUpdate
+from services.time_service import business_now
 
 
 ticket_router = APIRouter(prefix="/tickets", tags=["Tickets"])
@@ -47,6 +52,57 @@ def listar_tickets(
         query = query.filter(Ticket.tarifa_id == tarifa_id)
 
     return query.order_by(Ticket.hora_entrada.desc(), Ticket.id.desc()).all()
+
+
+@ticket_router.get("/history/today", response_model=DailyTicketHistoryResponse)
+def historial_tickets_dia(
+    tipo_vehiculo: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    current_date = business_now().date()
+    day_start = datetime.combine(current_date, time.min)
+    day_end = day_start + timedelta(days=1)
+
+    query = (
+        db.query(Ticket, Vehiculo)
+        .join(Vehiculo, Vehiculo.id == Ticket.vehiculo_id)
+        .filter(
+            Ticket.hora_entrada < day_end,
+            or_(
+                Ticket.hora_salida.is_(None),
+                Ticket.hora_salida >= day_start,
+            ),
+        )
+    )
+
+    if tipo_vehiculo and tipo_vehiculo != "all":
+        query = query.filter(Vehiculo.tipo_vehiculo == tipo_vehiculo.strip().lower())
+
+    rows = query.order_by(Ticket.hora_entrada.desc(), Ticket.id.desc()).all()
+
+    items = [
+        DailyTicketHistoryItem(
+            ticket_id=ticket.id,
+            codigo_ticket=ticket.codigo_ticket,
+            vehiculo_id=vehicle.id,
+            placa=ticket.placa_snapshot or vehicle.placa,
+            tipo_vehiculo=vehicle.tipo_vehiculo,
+            hora_entrada=ticket.hora_entrada,
+            hora_salida=ticket.hora_salida,
+            monto_cobrado=float(ticket.monto_total) if ticket.monto_total is not None else None,
+            estado=ticket.estado,
+        )
+        for ticket, vehicle in rows
+    ]
+    total_cobrado = sum(item.monto_cobrado or 0 for item in items)
+
+    return DailyTicketHistoryResponse(
+        date=current_date.isoformat(),
+        total=len(items),
+        total_cobrado=total_cobrado,
+        items=items,
+    )
 
 
 @ticket_router.get("/{ticket_id}", response_model=TicketResponse)

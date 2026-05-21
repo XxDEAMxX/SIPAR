@@ -9,5 +9,6 @@ class Vehiculo(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     placa = Column(String(10), nullable=False, unique=True, index=True)
+    tipo_vehiculo = Column(String(30), nullable=False, default="automovil", index=True)
     propietario_id = Column(Integer, ForeignKey("clientes.id"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

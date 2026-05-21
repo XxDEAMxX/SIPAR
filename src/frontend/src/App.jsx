@@ -64,6 +64,13 @@ const initialSlotState = {
   slots: [],
 };
 
+const initialHistoryState = {
+  date: "",
+  total: 0,
+  total_cobrado: 0,
+  items: [],
+};
+
 function Icon({ name, size = 20, className = "" }) {
   return (
     <svg
@@ -216,8 +223,22 @@ export default function App() {
   const [slotState, setSlotState] = useState(initialSlotState);
   const [isSlotsLoading, setIsSlotsLoading] = useState(false);
   const [slotsErrorMessage, setSlotsErrorMessage] = useState("");
+  const [dailyHistory, setDailyHistory] = useState(initialHistoryState);
+  const [historyVehicleType, setHistoryVehicleType] = useState("all");
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyErrorMessage, setHistoryErrorMessage] = useState("");
+  const [plateSearchTerm, setPlateSearchTerm] = useState("");
+  const [plateSearchResults, setPlateSearchResults] = useState([]);
+  const [isPlateSearchLoading, setIsPlateSearchLoading] = useState(false);
+  const [plateSearchHasSearched, setPlateSearchHasSearched] = useState(false);
+  const [plateSearchErrorMessage, setPlateSearchErrorMessage] = useState("");
+  const [exitPreview, setExitPreview] = useState(null);
+  const [isExitPreviewLoading, setIsExitPreviewLoading] = useState(false);
+  const [exitPreviewErrorMessage, setExitPreviewErrorMessage] = useState("");
+  const [entryConfirmation, setEntryConfirmation] = useState(null);
   const eventSourceRef = useRef(null);
   const refreshTimeoutRef = useRef(null);
+  const plateSearchTermRef = useRef("");
 
   const isAdmin = session.user?.rol === "admin";
 
@@ -269,7 +290,11 @@ export default function App() {
   }, [session.token]);
 
   useEffect(() => {
-    if (!session.token || !session.user || activeSection !== "dashboard") {
+    plateSearchTermRef.current = plateSearchTerm;
+  }, [plateSearchTerm]);
+
+  useEffect(() => {
+    if (!session.token || !session.user || !["dashboard", "historial"].includes(activeSection)) {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
@@ -295,7 +320,13 @@ export default function App() {
         clearTimeout(refreshTimeoutRef.current);
       }
       refreshTimeoutRef.current = setTimeout(() => {
-        refreshDashboard({ silent: true });
+        if (activeSection === "dashboard") {
+          refreshDashboard({ silent: true });
+        }
+        if (activeSection === "historial") {
+          refreshDailyHistory({ silent: true });
+          refreshPlateSearch({ query: normalizePlate(plateSearchTermRef.current), silent: true });
+        }
         refreshTimeoutRef.current = null;
       }, 400);
     });
@@ -313,7 +344,7 @@ export default function App() {
         refreshTimeoutRef.current = null;
       }
     };
-  }, [activeSection, session.token, session.user]);
+  }, [activeSection, historyVehicleType, session.token, session.user]);
 
   useEffect(() => {
     if (activeSection === "tarifas" && !isAdmin) {
@@ -345,6 +376,32 @@ export default function App() {
       }
     };
   }, [activeSection, session.token]);
+
+  useEffect(() => {
+    if (!session.token || activeSection !== "historial") {
+      return undefined;
+    }
+
+    const normalizedQuery = normalizePlate(plateSearchTerm);
+    if (normalizedQuery.length < 2) {
+      setPlateSearchResults([]);
+      setPlateSearchHasSearched(false);
+      setPlateSearchErrorMessage("");
+      setExitPreview(null);
+      setExitPreviewErrorMessage("");
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeoutId = setTimeout(() => {
+      refreshPlateSearch({ query: normalizedQuery, cancelled: () => cancelled });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [activeSection, plateSearchTerm, session.token]);
 
   useEffect(() => {
     if (!session.token || activeSection !== "tarifas" || !isAdmin) {
@@ -385,6 +442,24 @@ export default function App() {
       cancelled = true;
     };
   }, [activeSection, isAdmin, session.token, tarifaFilters.activas, tarifaFilters.tipo]);
+
+  useEffect(() => {
+    if (!session.token || activeSection !== "historial") {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function bootstrapHistory() {
+      await refreshDailyHistory({ silent: false, cancelled: () => cancelled });
+    }
+
+    bootstrapHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, session.token, historyVehicleType]);
 
   async function refreshDashboard({ silent = false } = {}) {
     if (!silent) {
@@ -455,6 +530,63 @@ export default function App() {
     }
   }
 
+  async function refreshDailyHistory({ silent = false, cancelled = () => false } = {}) {
+    if (!silent) {
+      setIsHistoryLoading(true);
+    }
+    setHistoryErrorMessage("");
+    try {
+      const params = {};
+      if (historyVehicleType !== "all") {
+        params.tipo_vehiculo = historyVehicleType;
+      }
+      const response = await api.get("/tickets/history/today", { params });
+      if (!cancelled()) {
+        setDailyHistory(response.data);
+      }
+    } catch (error) {
+      if (!cancelled()) {
+        setHistoryErrorMessage(getErrorMessage(error, "No fue posible cargar el historial del dia."));
+      }
+    } finally {
+      if (!silent && !cancelled()) {
+        setIsHistoryLoading(false);
+      }
+    }
+  }
+
+  async function refreshPlateSearch({
+    query = normalizePlate(plateSearchTerm),
+    silent = false,
+    cancelled = () => false,
+  } = {}) {
+    if (query.length < 2) {
+      return;
+    }
+    if (!silent) {
+      setIsPlateSearchLoading(true);
+    }
+    setPlateSearchErrorMessage("");
+    setPlateSearchHasSearched(true);
+    try {
+      const response = await api.get("/parking/vehicles/search", {
+        params: { plate: query },
+      });
+      if (!cancelled()) {
+        setPlateSearchResults(response.data);
+      }
+    } catch (error) {
+      if (!cancelled()) {
+        setPlateSearchResults([]);
+        setPlateSearchErrorMessage(getErrorMessage(error, "No fue posible buscar la placa."));
+      }
+    } finally {
+      if (!silent && !cancelled()) {
+        setIsPlateSearchLoading(false);
+      }
+    }
+  }
+
   async function handleLoginSubmit(event) {
     event.preventDefault();
     setIsAuthLoading(true);
@@ -494,14 +626,35 @@ export default function App() {
     setTarifaErrorMessage("");
     setSlotState(initialSlotState);
     setSlotsErrorMessage("");
+    setDailyHistory(initialHistoryState);
+    setHistoryVehicleType("all");
+    setHistoryErrorMessage("");
+    setPlateSearchTerm("");
+    setPlateSearchResults([]);
+    setPlateSearchHasSearched(false);
+    setPlateSearchErrorMessage("");
+    setExitPreview(null);
+    setExitPreviewErrorMessage("");
+    setEntryConfirmation(null);
   }
 
-  async function handleManualRegister(direction) {
-    const normalizedPlate = normalizePlate(plate);
+  function handleRequestEntryConfirmation(plateValue) {
+    const normalizedPlate = normalizePlate(plateValue);
+    if (!normalizedPlate) {
+      return;
+    }
+    setPlate(normalizedPlate);
+    setEntryConfirmation({ plate: normalizedPlate });
+    setErrorMessage("");
+  }
+
+  async function handleManualRegister(direction, plateOverride = plate) {
+    const normalizedPlate = normalizePlate(plateOverride);
     if (!normalizedPlate) {
       return;
     }
 
+    setPlate(normalizedPlate);
     setIsSubmitting(true);
     setErrorMessage("");
 
@@ -531,6 +684,17 @@ export default function App() {
         }),
       }));
       await refreshDashboard({ silent: true });
+      await refreshPlateSearch({ query: normalizedPlate, silent: true });
+      if (activeSection === "historial") {
+        await refreshDailyHistory({ silent: true });
+      }
+      if (direction === "entry") {
+        setEntryConfirmation(null);
+      }
+      if (direction === "exit") {
+        setExitPreview(null);
+        setExitPreviewErrorMessage("");
+      }
     } catch (error) {
       setErrorMessage(getErrorMessage(error, "No fue posible registrar el movimiento."));
     } finally {
@@ -641,25 +805,59 @@ export default function App() {
       ? "Panel de ingreso y salida"
       : activeSection === "cupos"
         ? "Ocupacion de cupos"
-        : "Gestion de tarifas";
+        : activeSection === "historial"
+          ? "Historial del dia"
+          : "Gestion de tarifas";
 
   const refreshLabel =
     activeSection === "dashboard"
       ? "Actualizar panel"
       : activeSection === "cupos"
         ? "Actualizar cupos"
-        : "Actualizar tarifas";
+        : activeSection === "historial"
+          ? "Actualizar historial"
+          : "Actualizar tarifas";
 
   const isRefreshing =
-    activeSection === "dashboard" ? isLoading : activeSection === "cupos" ? isSlotsLoading : isTarifasLoading;
+    activeSection === "dashboard"
+      ? isLoading
+      : activeSection === "cupos"
+        ? isSlotsLoading
+        : activeSection === "historial"
+          ? isHistoryLoading
+          : isTarifasLoading;
 
   function refreshActiveSection() {
     if (activeSection === "dashboard") {
       refreshDashboard();
     } else if (activeSection === "cupos") {
       refreshSlots();
+    } else if (activeSection === "historial") {
+      refreshDailyHistory();
     } else {
       refreshTarifas();
+    }
+  }
+
+  async function handlePreviewExit(plateValue) {
+    const normalizedPlate = normalizePlate(plateValue);
+    if (!normalizedPlate) {
+      return;
+    }
+
+    setPlate(normalizedPlate);
+    setIsExitPreviewLoading(true);
+    setExitPreviewErrorMessage("");
+    try {
+      const response = await api.get("/parking/manual/exit/preview", {
+        params: { plate: normalizedPlate },
+      });
+      setExitPreview(response.data);
+    } catch (error) {
+      setExitPreview(null);
+      setExitPreviewErrorMessage(getErrorMessage(error, "No fue posible previsualizar la salida."));
+    } finally {
+      setIsExitPreviewLoading(false);
     }
   }
 
@@ -700,6 +898,12 @@ export default function App() {
             label="Cupos"
             active={activeSection === "cupos"}
             onClick={() => setActiveSection("cupos")}
+          />
+          <SidebarItem
+            icon="clock"
+            label="Historial"
+            active={activeSection === "historial"}
+            onClick={() => setActiveSection("historial")}
           />
           {isAdmin ? (
             <SidebarItem
@@ -830,7 +1034,7 @@ export default function App() {
                   <div className="form-actions">
                     <button
                       type="button"
-                      onClick={() => handleManualRegister("entry")}
+                      onClick={() => handleRequestEntryConfirmation(plate)}
                       disabled={!plate || isSubmitting}
                       className="action-button action-button--entry"
                     >
@@ -839,12 +1043,12 @@ export default function App() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleManualRegister("exit")}
+                      onClick={() => handlePreviewExit(plate)}
                       disabled={!plate || isSubmitting}
                       className="action-button action-button--exit"
                     >
                       <Icon name="logout" size={18} />
-                      Registrar salida
+                      Previsualizar salida
                     </button>
                   </div>
                 </div>
@@ -922,6 +1126,22 @@ export default function App() {
             isLoading={isSlotsLoading}
             streamUrl={SLOT_STREAM_URL}
           />
+        ) : activeSection === "historial" ? (
+          <HistorySection
+            history={dailyHistory}
+            vehicleType={historyVehicleType}
+            errorMessage={historyErrorMessage}
+            isLoading={isHistoryLoading}
+            onVehicleTypeChange={setHistoryVehicleType}
+            plateSearchTerm={plateSearchTerm}
+            plateSearchResults={plateSearchResults}
+            isPlateSearchLoading={isPlateSearchLoading}
+            plateSearchHasSearched={plateSearchHasSearched}
+            plateSearchErrorMessage={plateSearchErrorMessage}
+            isExitPreviewLoading={isExitPreviewLoading}
+            onPlateSearchChange={setPlateSearchTerm}
+            onPreviewExit={handlePreviewExit}
+          />
         ) : (
           <TarifasSection
             tarifas={tarifas}
@@ -940,6 +1160,23 @@ export default function App() {
             onToggleState={handleToggleTarifa}
           />
         )}
+        <EntryConfirmationModal
+          confirmation={entryConfirmation}
+          isSubmitting={isSubmitting}
+          onCancel={() => setEntryConfirmation(null)}
+          onConfirm={() => entryConfirmation && handleManualRegister("entry", entryConfirmation.plate)}
+        />
+        <ExitPreviewModal
+          preview={exitPreview}
+          errorMessage={exitPreviewErrorMessage}
+          isLoading={isExitPreviewLoading}
+          isSubmitting={isSubmitting}
+          onCancel={() => {
+            setExitPreview(null);
+            setExitPreviewErrorMessage("");
+          }}
+          onConfirm={() => exitPreview && handleManualRegister("exit", exitPreview.plate)}
+        />
       </main>
     </div>
   );
@@ -1028,6 +1265,118 @@ function SidebarItem({ icon, label, active, onClick }) {
       <Icon name={icon} size={20} />
       <span>{label}</span>
     </button>
+  );
+}
+
+function EntryConfirmationModal({ confirmation, isSubmitting, onCancel, onConfirm }) {
+  if (!confirmation) {
+    return null;
+  }
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="entry-confirmation-title">
+      <div className="entry-confirmation modal-card">
+        <div className="entry-confirmation__header">
+          <div>
+            <h4 id="entry-confirmation-title">Confirmar ingreso manual</h4>
+            <p>Valida la placa antes de crear el ticket de entrada.</p>
+          </div>
+          <span className="pill pill--entry">Ingreso</span>
+        </div>
+
+        <div className="entry-confirmation__plate">
+          <span>Placa detectada</span>
+          <strong>{confirmation.plate}</strong>
+        </div>
+
+        <div className="entry-confirmation__actions">
+          <button type="button" className="secondary-button secondary-button--compact" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button type="button" className="action-button action-button--entry" onClick={onConfirm} disabled={isSubmitting}>
+            <Icon name={isSubmitting ? "spinner" : "login"} size={18} className={isSubmitting ? "spin" : ""} />
+            Confirmar ingreso
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExitPreviewModal({ preview, errorMessage, isLoading, isSubmitting, onCancel, onConfirm }) {
+  if (!preview && !errorMessage && !isLoading) {
+    return null;
+  }
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="exit-preview-title">
+      <div className="exit-preview exit-preview--modal modal-card">
+        <div className="exit-preview__header">
+          <div>
+            <h4 id="exit-preview-title">Previsualizacion de salida</h4>
+            <p>Revisa los datos antes de cerrar el ticket y facturar.</p>
+          </div>
+          {isLoading ? <Icon name="spinner" size={18} className="spin" /> : null}
+        </div>
+
+        {errorMessage ? <Alert type="error" message={errorMessage} /> : null}
+
+        {preview ? (
+          <>
+            <div className="exit-preview__grid">
+              <div>
+                <span>Placa</span>
+                <strong>{preview.plate}</strong>
+              </div>
+              <div>
+                <span>Tipo</span>
+                <strong>{preview.tipo_vehiculo}</strong>
+              </div>
+              <div>
+                <span>Entrada</span>
+                <strong>{formatDateTime(preview.hora_entrada)}</strong>
+              </div>
+              <div>
+                <span>Salida estimada</span>
+                <strong>{formatDateTime(preview.detected_at)}</strong>
+              </div>
+              <div>
+                <span>Tiempo parqueado</span>
+                <strong>{preview.parking_minutes} min</strong>
+              </div>
+              <div>
+                <span>Minutos cobrados</span>
+                <strong>{preview.minutos_cobrados} min</strong>
+              </div>
+              <div>
+                <span>Tarifa</span>
+                <strong>{preview.tarifa_nombre || preview.tarifa_tipo || "Sin tarifa"}</strong>
+              </div>
+              <div>
+                <span>Monto estimado</span>
+                <strong>{formatMoney(preview.monto_estimado)}</strong>
+              </div>
+            </div>
+
+            <div className="exit-preview__actions">
+              <button type="button" className="secondary-button secondary-button--compact" onClick={onCancel}>
+                Cancelar
+              </button>
+              <button type="button" className="action-button action-button--exit" onClick={onConfirm} disabled={isSubmitting}>
+                <Icon name={isSubmitting ? "spinner" : "logout"} size={18} className={isSubmitting ? "spin" : ""} />
+                Confirmar salida
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="exit-preview__actions">
+            <button type="button" className="secondary-button secondary-button--compact" onClick={onCancel}>
+              Cerrar
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1209,6 +1558,203 @@ function SlotStreamCard({ streamUrl, connected, lastError }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function HistorySection({
+  history,
+  vehicleType,
+  errorMessage,
+  isLoading,
+  onVehicleTypeChange,
+  plateSearchTerm,
+  plateSearchResults,
+  isPlateSearchLoading,
+  plateSearchHasSearched,
+  plateSearchErrorMessage,
+  isExitPreviewLoading,
+  onPlateSearchChange,
+  onPreviewExit,
+}) {
+  const items = history.items || [];
+  const closedCount = items.filter((item) => item.hora_salida).length;
+  const openCount = Math.max(items.length - closedCount, 0);
+
+  return (
+    <>
+      {errorMessage && (
+        <section className="alerts">
+          <Alert type="error" message={errorMessage} />
+        </section>
+      )}
+
+      <section className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-card__content">
+            <div>
+              <p>Vehiculos del dia</p>
+              <strong>{history.total}</strong>
+            </div>
+            <div className="stat-card__icon">
+              <Icon name="car" size={22} />
+            </div>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card__content">
+            <div>
+              <p>Salidas registradas</p>
+              <strong>{closedCount}</strong>
+            </div>
+            <div className="stat-card__icon">
+              <Icon name="logout" size={22} />
+            </div>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card__content">
+            <div>
+              <p>Total cobrado</p>
+              <strong>{formatMoney(history.total_cobrado)}</strong>
+            </div>
+            <div className="stat-card__icon">
+              <Icon name="card" size={22} />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="content-grid content-grid--history">
+        <div className="panel-card panel-card--search">
+          <div className="plate-search plate-search--history">
+            <div className="plate-search__header">
+              <div>
+                <h4>Busqueda rapida para salida</h4>
+                <p>Busca una placa, revisa el ticket abierto y abre la previsualizacion antes de facturar.</p>
+              </div>
+              {isPlateSearchLoading ? <Icon name="spinner" size={18} className="spin" /> : null}
+            </div>
+
+            <label className="search-box search-box--full">
+              <Icon name="search" size={18} className="search-box__icon" />
+              <input
+                value={plateSearchTerm}
+                onChange={(event) => onPlateSearchChange(normalizePlate(event.target.value))}
+                placeholder="Buscar placa para salida"
+              />
+            </label>
+
+            {plateSearchErrorMessage ? <Alert type="error" message={plateSearchErrorMessage} /> : null}
+
+            <div className="plate-search__results">
+              {plateSearchResults.map((item) => (
+                <div key={`${item.vehicle_id}-${item.ticket_id || "vehicle"}`} className="plate-result">
+                  <div>
+                    <strong>{item.plate}</strong>
+                    <span>{item.tipo_vehiculo}</span>
+                    <small>
+                      {item.can_register_exit
+                        ? `Ingreso ${formatTime(item.hora_entrada)}`
+                        : item.estado_ticket
+                          ? `Ticket ${item.estado_ticket}`
+                          : "Sin ticket activo"}
+                    </small>
+                  </div>
+                  <button
+                    type="button"
+                    className="table-action"
+                    disabled={!item.can_register_exit || isExitPreviewLoading}
+                    onClick={() => onPreviewExit(item.plate)}
+                  >
+                    Ver salida
+                  </button>
+                </div>
+              ))}
+              {plateSearchHasSearched && !isPlateSearchLoading && !plateSearchResults.length ? (
+                <div className="plate-search__empty">Vehiculo no encontrado</div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel-card panel-card--table panel-card--history">
+          <div className="panel-card__header panel-card__header--tarifas">
+            <div>
+              <h3>Vehiculos de hoy</h3>
+              <p>{isLoading ? "Actualizando historial..." : `Fecha operativa: ${history.date || "--"}`}</p>
+            </div>
+            <div className="tarifa-filters">
+              <label className="tarifa-filter">
+                <span>Tipo de vehiculo</span>
+                <select value={vehicleType} onChange={(event) => onVehicleTypeChange(event.target.value)}>
+                  <option value="all">Todos</option>
+                  <option value="automovil">Automovil</option>
+                  <option value="motocicleta">Motocicleta</option>
+                  <option value="camioneta">Camioneta</option>
+                  <option value="camion">Camion</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div className="history-summary">
+            <span>Abiertos: {openCount}</span>
+            <span>Cerrados: {closedCount}</span>
+            <span>Filtro: {vehicleType === "all" ? "Todos" : vehicleType}</span>
+          </div>
+
+          <div className="table-wrap table-wrap--history">
+            <table>
+              <thead>
+                <tr>
+                  <th>Placa</th>
+                  <th>Tipo</th>
+                  <th>Hora entrada</th>
+                  <th>Hora salida</th>
+                  <th>Monto cobrado</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.ticket_id}>
+                    <td className="cell-strong">{item.placa}</td>
+                    <td>
+                      <span className="pill pill--info">{item.tipo_vehiculo}</span>
+                    </td>
+                    <td>
+                      <span className="time-cell">
+                        <Icon name="login" size={15} />
+                        {formatTime(item.hora_entrada)}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="time-cell">
+                        <Icon name="logout" size={15} />
+                        {item.hora_salida ? formatTime(item.hora_salida) : "--"}
+                      </span>
+                    </td>
+                    <td>{formatMoney(item.monto_cobrado || 0)}</td>
+                    <td>
+                      <span className={`pill ${item.estado === "abierto" ? "pill--warning" : "pill--entry"}`}>
+                        {item.estado}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {!items.length && (
+                  <tr>
+                    <td className="empty-state" colSpan="6">
+                      {isLoading ? "Cargando historial..." : "No hay vehiculos para el filtro seleccionado."}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </>
   );
 }
 

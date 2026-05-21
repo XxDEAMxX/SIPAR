@@ -82,3 +82,32 @@ class ParkingStateResponse(BaseModel):
     occupancy: int
     active_sessions: list[ActiveParkingSession]
     recent_events: list[ParkingEventItem]
+
+
+class VehiclePlateSearchItem(BaseModel):
+    vehicle_id: int
+    plate: str
+    tipo_vehiculo: str
+    ticket_id: int | None = None
+    codigo_ticket: str | None = None
+    estado_ticket: str | None = None
+    hora_entrada: datetime | None = None
+    hora_salida: datetime | None = None
+    monto_cobrado: float | None = None
+    can_register_exit: bool
+
+
+class ParkingExitPreviewResponse(BaseModel):
+    vehicle_id: int
+    ticket_id: int
+    codigo_ticket: str | None = None
+    plate: str
+    tipo_vehiculo: str
+    hora_entrada: datetime
+    detected_at: datetime
+    parking_minutes: int
+    minutos_cobrados: int
+    monto_estimado: float
+    tarifa_id: int | None = None
+    tarifa_nombre: str | None = None
+    tarifa_tipo: str | None = None

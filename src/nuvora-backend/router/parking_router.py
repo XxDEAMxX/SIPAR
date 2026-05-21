@@ -3,7 +3,7 @@ from datetime import datetime
 from queue import Empty, Full, Queue
 from threading import Lock
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -20,10 +20,12 @@ from schema.parking_schema import (
     ParkingDetectionCreate,
     ParkingDetectionResponse,
     ParkingEventItem,
+    ParkingExitPreviewResponse,
     ParkingManualOperationCreate,
     ParkingManualResponse,
     ParkingOperationResponse,
     ParkingStateResponse,
+    VehiclePlateSearchItem,
 )
 from services.plate_resolution import resolve_plate
 from services.tariff_service import calculate_tariff_charge
@@ -450,6 +452,42 @@ def register_manual_exit(
     )
 
 
+@parking_router.get("/manual/exit/preview", response_model=ParkingExitPreviewResponse)
+def preview_manual_exit(
+    plate: str = Query(..., min_length=1),
+    detected_at: datetime | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    normalized_plate = plate.strip().upper()
+    reference_time = normalize_business_datetime(detected_at)
+    vehicle = db.query(Vehiculo).filter(Vehiculo.placa == normalized_plate).first()
+    if vehicle is None:
+        raise HTTPException(status_code=404, detail="Vehiculo no encontrado")
+
+    ticket = get_open_ticket(db, vehicle.id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="No existe una entrada activa para esta placa.")
+
+    parking_minutes = calculate_business_minutes(ticket.hora_entrada, reference_time)
+    tariff_calculation = calculate_tariff_charge(db, reference_time, parking_minutes)
+    return ParkingExitPreviewResponse(
+        vehicle_id=vehicle.id,
+        ticket_id=ticket.id,
+        codigo_ticket=ticket.codigo_ticket,
+        plate=ticket.placa_snapshot or vehicle.placa,
+        tipo_vehiculo=vehicle.tipo_vehiculo,
+        hora_entrada=ticket.hora_entrada,
+        detected_at=reference_time,
+        parking_minutes=parking_minutes,
+        minutos_cobrados=tariff_calculation.minutos_cobrados,
+        monto_estimado=float(tariff_calculation.monto_total),
+        tarifa_id=tariff_calculation.tarifa.id if tariff_calculation.tarifa else None,
+        tarifa_nombre=tariff_calculation.tarifa.nombre if tariff_calculation.tarifa else None,
+        tarifa_tipo=tariff_calculation.tarifa.tipo if tariff_calculation.tarifa else None,
+    )
+
+
 @parking_router.get("/state", response_model=ParkingStateResponse)
 def get_parking_state(db: Session = Depends(get_db)):
     open_tickets = (
@@ -491,6 +529,55 @@ def get_parking_state(db: Session = Depends(get_db)):
 def list_recent_events(db: Session = Depends(get_db)):
     rows = db.query(ParkingEvent).order_by(ParkingEvent.id.desc()).limit(50).all()
     return [build_event_payload(event=row, parking_minutes=None) for row in rows]
+
+
+@parking_router.get("/vehicles/search", response_model=list[VehiclePlateSearchItem])
+def search_vehicles_by_plate(
+    plate: str,
+    limit: int = 8,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    query = plate.strip().upper()
+    if not query:
+        return []
+
+    safe_limit = min(max(limit, 1), 20)
+    rows = (
+        db.query(Vehiculo, Ticket)
+        .outerjoin(Ticket, Ticket.vehiculo_id == Vehiculo.id)
+        .filter(Vehiculo.placa.like(f"%{query}%"))
+        .order_by(
+            (Ticket.estado == "abierto").desc(),
+            Ticket.hora_entrada.desc(),
+            Vehiculo.placa.asc(),
+        )
+        .limit(safe_limit)
+        .all()
+    )
+
+    seen_vehicle_ids: set[int] = set()
+    results: list[VehiclePlateSearchItem] = []
+    for vehicle, ticket in rows:
+        if vehicle.id in seen_vehicle_ids:
+            continue
+        seen_vehicle_ids.add(vehicle.id)
+        results.append(
+            VehiclePlateSearchItem(
+                vehicle_id=vehicle.id,
+                plate=vehicle.placa,
+                tipo_vehiculo=vehicle.tipo_vehiculo,
+                ticket_id=ticket.id if ticket else None,
+                codigo_ticket=ticket.codigo_ticket if ticket else None,
+                estado_ticket=ticket.estado if ticket else None,
+                hora_entrada=ticket.hora_entrada if ticket else None,
+                hora_salida=ticket.hora_salida if ticket else None,
+                monto_cobrado=float(ticket.monto_total) if ticket and ticket.monto_total is not None else None,
+                can_register_exit=bool(ticket and ticket.estado == "abierto"),
+            )
+        )
+
+    return results
 
 
 @parking_router.get("/events/stream")
